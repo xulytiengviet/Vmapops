@@ -11,6 +11,8 @@ let routesService: any = null;
 let placesAggregateService: any = null;
 let geocodingService: any = null;
 let roadsService: any = null;
+let timeZoneService: any = null;
+let geolocationService: any = null;
 // Note: infoWindowManager is declared in app.ts to avoid duplicate declaration
 
 /**
@@ -92,6 +94,22 @@ function initMap(): void {
         console.log('Roads Service initialized');
         if (typeof window !== 'undefined' && (window as any).mapOps) {
             (window as any).mapOps.roadsService = roadsService;
+        }
+    }
+
+    if (typeof window.TimeZoneService !== 'undefined') {
+        timeZoneService = new window.TimeZoneService();
+        console.log('Time Zone Service initialized');
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.timeZoneService = timeZoneService;
+        }
+    }
+
+    if (typeof window.GeolocationService !== 'undefined') {
+        geolocationService = new window.GeolocationService();
+        console.log('Geolocation Service initialized');
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.geolocationService = geolocationService;
         }
     }
 
@@ -286,7 +304,9 @@ if (typeof window !== 'undefined') {
         routesService,
         placesAggregateService,
         geocodingService,
-        roadsService
+        roadsService,
+        timeZoneService,
+        geolocationService
         // infoWindowManager is exported from app.ts
     };
 

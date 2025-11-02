@@ -16,6 +16,8 @@ export interface Config {
         places: string;
         routes: string;
         geocoding: string;
+        timezone: string;
+        geolocation: string;
     };
 }
 
@@ -33,6 +35,8 @@ export interface MapOps {
     placesAggregateService: any | null;
     geocodingService: any | null;
     roadsService: any | null;
+    timeZoneService: any | null;
+    geolocationService: any | null;
 }
 
 export interface TextSearchOptions {
@@ -180,6 +184,48 @@ export interface SnapToRoadsOptions {
     interpolate?: boolean;
 }
 
+export interface TimeZoneOptions {
+    timestamp?: number | Date;
+    language?: string;
+}
+
+export interface TimeZoneResult {
+    timeZoneId: string;
+    timeZoneName: string;
+    rawOffset: number;
+    dstOffset: number;
+    utcOffset: number;
+    utcOffsetHours: number;
+    currentTime: Date;
+    isDst: boolean;
+}
+
+export interface GeolocationOptions {
+    considerIp?: boolean;
+    wifiAccessPoints?: Array<{
+        macAddress: string;
+        signalStrength?: number;
+        signalToNoiseRatio?: number;
+        channel?: number;
+    }>;
+    cellTowers?: Array<{
+        cellId: number;
+        locationAreaCode: number;
+        mobileCountryCode: number;
+        mobileNetworkCode: number;
+        age?: number;
+        signalStrength?: number;
+        timingAdvance?: number;
+    }>;
+}
+
+export interface GeolocationResult {
+    location: { lat: number; lng: number };
+    accuracy: number;
+    timestamp: Date;
+    source?: 'gps' | 'geolocation-api' | 'ip';
+}
+
 export interface GeocodeResult {
     lat: number;
     lng: number;
@@ -207,5 +253,7 @@ declare global {
         PlacesAggregateService?: any;
         GeocodingService?: any;
         RoadsService?: any;
+        TimeZoneService?: any;
+        GeolocationService?: any;
     }
 }

@@ -6,6 +6,7 @@ import { MapView } from './components/MapView';
 import { ChatInterface } from './components/ChatInterface';
 import { Place, Location } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
+import { initializeServices } from '@/lib/services';
 
 // Static libraries array to prevent recreation
 const GOOGLE_MAPS_LIBRARIES: ('places' | 'geometry' | 'drawing' | 'localcontext' | 'marker')[] = [
@@ -19,6 +20,13 @@ export default function Home() {
     const [places, setPlaces] = useState<Place[]>([]);
     const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
     const [mapsLoaded, setMapsLoaded] = useState(false);
+
+    // Initialize services when Google Maps loads
+    useEffect(() => {
+        if (mapsLoaded) {
+            initializeServices();
+        }
+    }, [mapsLoaded]);
 
     // Request user location on mount
     useEffect(() => {
