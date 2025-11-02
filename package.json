@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "MapOps - Conversational City Analyst",
   "scripts": {
-    "postbuild": "node scripts/inject-env.js",
     "build": "tsc",
     "watch": "tsc --watch",
     "dev": "tsc --watch & npx http-server -p 8000 -c-1",
