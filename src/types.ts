@@ -68,6 +68,56 @@ export interface RouteOptions {
     avoidTolls?: boolean;
     avoidFerries?: boolean;
     optimize?: boolean;
+    // Transit-specific options
+    arrivalTime?: string | Date;
+    departureTime?: string | Date;
+    transitPreferences?: TransitPreferences;
+    computeAlternativeRoutes?: boolean;
+    language?: string;
+}
+
+export interface TransitPreferences {
+    allowedTravelModes?: ('BUS' | 'SUBWAY' | 'TRAIN' | 'LIGHT_RAIL' | 'RAIL')[];
+    routingPreference?: 'LESS_WALKING' | 'FEWER_TRANSFERS';
+}
+
+export interface TransitDetails {
+    departureStop?: {
+        name?: string;
+        location?: { lat: number; lng: number };
+    };
+    arrivalStop?: {
+        name?: string;
+        location?: { lat: number; lng: number };
+    };
+    departureTime?: string;
+    arrivalTime?: string;
+    localizedDepartureTime?: {
+        time?: { text?: string };
+        timeZone?: string;
+    };
+    localizedArrivalTime?: {
+        time?: { text?: string };
+        timeZone?: string;
+    };
+    headsign?: string;
+    transitLine?: {
+        agencies?: Array<{
+            name?: string;
+            phoneNumber?: string;
+            uri?: string;
+        }>;
+        name?: string;
+        color?: string;
+        nameShort?: string;
+        textColor?: string;
+        vehicle?: {
+            name?: { text?: string };
+            type?: string;
+            iconUri?: string;
+        };
+    };
+    stopCount?: number;
 }
 
 export interface DistanceMatrixOptions {
@@ -75,6 +125,11 @@ export interface DistanceMatrixOptions {
     avoidHighways?: boolean;
     avoidTolls?: boolean;
     avoidFerries?: boolean;
+    // Transit-specific options
+    arrivalTime?: string | Date;
+    departureTime?: string | Date;
+    transitPreferences?: TransitPreferences;
+    language?: string;
 }
 
 export interface RouteOptimizationOptions {
