@@ -94,8 +94,8 @@ const searchPlacesOutputSchema = z.object({
       }),
       mapCommands: z.array(
         z.object({
-          type: z.enum(["SHOW_ON_MAP", "PAN_TO"]),
-          payload: z.any(),
+          type: z.enum(["CLEAR_MARKERS", "SHOW_ON_MAP", "PAN_TO"]),
+          payload: z.any().optional(),
         })
       ),
     })
@@ -254,7 +254,13 @@ export const searchPlaces = createTool({
       );
 
       // Build map commands
-      const mapCommands: Array<{ type: "SHOW_ON_MAP" | "PAN_TO"; payload: any }> = [];
+      const mapCommands: Array<{ type: "CLEAR_MARKERS" | "SHOW_ON_MAP" | "PAN_TO"; payload: any }> = [];
+
+      // Clear old place markers before showing new search results
+      mapCommands.push({
+        type: "CLEAR_MARKERS",
+        payload: {},
+      });
 
       if (enriched.length > 0) {
         // Add markers for first 10 results

@@ -7,6 +7,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { GeocodingService } from "@/lib/services/geocoding-service";
 import { generateGeocodeInsights } from "./utils/insight-generator";
+import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
 const outputMapCommandEnum = z.enum([
   "PAN_TO",
@@ -64,20 +65,67 @@ export const navigateToPlace = createTool({
     error: z.string().optional(),
   }),
 
-  execute: async ({ context, writer }) => {
+  execute: async ({ context, runtimeContext, writer }) => {
     const service = new GeocodingService();
 
     try {
-      const results = await service.geocode(context.query);
-      if (!results || results.length === 0) {
-        return {
-          success: false,
-          error: `No results found for "${context.query}"`,
-        };
+      // Check saved places first
+      const savedPlaces = runtimeContext?.get("savedPlaces") as Record<string, { location: { lat: number; lng: number }; name: string; address: string }> | undefined;
+      const normalizedQuery = context.query.toLowerCase().trim();
+      
+      let bestResult: any = null;
+      let savedPlaceName: string | undefined = undefined;
+
+      // Check if query matches a saved place
+      if (savedPlaces) {
+        if (normalizedQuery === 'home' && savedPlaces.home) {
+          bestResult = {
+            placeId: `saved-home`,
+            formattedAddress: savedPlaces.home.address,
+            location: savedPlaces.home.location,
+            bounds: undefined,
+          };
+          savedPlaceName = savedPlaces.home.name;
+          console.log(`[navigate-to-place] Using saved home: ${savedPlaces.home.name}`);
+        } else if (normalizedQuery === 'work' && savedPlaces.work) {
+          bestResult = {
+            placeId: `saved-work`,
+            formattedAddress: savedPlaces.work.address,
+            location: savedPlaces.work.location,
+            bounds: undefined,
+          };
+          savedPlaceName = savedPlaces.work.name;
+          console.log(`[navigate-to-place] Using saved work: ${savedPlaces.work.name}`);
+        } else if (savedPlaces[normalizedQuery]) {
+          const saved = savedPlaces[normalizedQuery];
+          bestResult = {
+            placeId: `saved-${normalizedQuery}`,
+            formattedAddress: saved.address,
+            location: saved.location,
+            bounds: undefined,
+          };
+          savedPlaceName = saved.name;
+          console.log(`[navigate-to-place] Using saved favorite: ${saved.name}`);
+        }
       }
 
-      const bestResult = results[0];
-      const insights = generateGeocodeInsights(results, context.query);
+      // If not found in saved places, geocode it
+      if (!bestResult) {
+        const results = await service.geocode(context.query);
+        if (!results || results.length === 0) {
+          return {
+            success: false,
+            error: `No results found for "${context.query}"`,
+          };
+        }
+        bestResult = results[0];
+      }
+
+      const insights = generateGeocodeInsights(bestResult ? [bestResult] : [], context.query);
+      // Update insights if we used a saved place
+      if (savedPlaceName) {
+        insights.summary = `Navigated to your saved place: ${savedPlaceName}`;
+      }
 
       type MapCommandType = "PAN_TO" | "SET_ZOOM" | "FIT_BOUNDS" | "SHOW_ON_MAP";
       const mapCommands: Array<{ type: MapCommandType; payload: any }> = [];

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { LoadScript } from '@react-google-maps/api';
 import { MapView } from './components/MapView';
 import { ChatInterface } from './components/ChatInterface';
+import { Navbar } from './components/Navbar';
 import { Place, Location } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
 import { initializeServices } from '@/lib/services';
@@ -110,7 +111,12 @@ export default function Home() {
             googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!}
             libraries={GOOGLE_MAPS_LIBRARIES}
         >
-            <div className="flex h-screen bg-gray-100">
+            <div className="flex h-screen bg-gray-100 flex-col">
+                {/* Navbar */}
+                <Navbar />
+
+                {/* Main Content */}
+                <div className="flex flex-1 overflow-hidden pt-16">
                 {/* Map - Left side */}
                 <div className="flex-1 relative overflow-hidden">
                     <MapView
@@ -175,6 +181,7 @@ export default function Home() {
                             </button>
                         </div>
                     )}
+                    </div>
                 </div>
             </div>
         </LoadScript>

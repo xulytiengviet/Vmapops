@@ -7,25 +7,32 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { RoutesService } from "@/lib/services/routes-service";
+import { GeocodingService } from "@/lib/services/geocoding-service";
 import { formatDistance, formatDuration } from "./utils/distance-calculator";
 import { generateDirectionInsights } from "./utils/insight-generator";
 import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
 const getDirectionsSchema = z.object({
   origin: z
-    .object({
+    .union([
+      z.object({
       lat: z.number(),
       lng: z.number(),
-    })
+      }),
+      z.string(),
+    ])
     .optional()
-    .describe("Starting location (defaults to user's current location)"),
+    .describe("Starting location (defaults to user's current location). Can be coordinates or place name like 'home' or 'work'"),
 
   destination: z
-    .object({
+    .union([
+      z.object({
       lat: z.number(),
       lng: z.number(),
-    })
-    .describe("Ending location"),
+      }),
+      z.string(),
+    ])
+    .describe("Ending location. Can be coordinates or place name like 'home' or 'work'"),
 
   mode: z
     .enum(["DRIVE", "WALK", "BICYCLE", "TRANSIT"])
@@ -84,8 +91,8 @@ const getDirectionsOutputSchema = z.object({
       }),
       mapCommands: z.array(
         z.object({
-          type: z.enum(["DRAW_ROUTE", "PAN_TO"]),
-          payload: z.any(),
+          type: z.enum(["CLEAR_ROUTES", "DRAW_ROUTE", "PAN_TO"]),
+          payload: z.any().optional(),
         })
       ),
     })
@@ -117,12 +124,89 @@ export const getDirections = createTool({
   execute: async ({ context, runtimeContext, writer }) => {
     try {
       const service = new RoutesService();
+      const geocodingService = new GeocodingService();
+
+      // Helper to calculate distance between two coordinates (Haversine formula)
+      const calculateDistance = (loc1: { lat: number; lng: number }, loc2: { lat: number; lng: number }): number => {
+        const R = 6371; // Earth's radius in km
+        const dLat = (loc2.lat - loc1.lat) * Math.PI / 180;
+        const dLng = (loc2.lng - loc1.lng) * Math.PI / 180;
+        const a = 
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(loc1.lat * Math.PI / 180) * Math.cos(loc2.lat * Math.PI / 180) *
+          Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c; // Distance in km
+      };
+
+      // Helper to resolve location from string or coordinates
+      const resolveLocation = async (
+        input: { lat: number; lng: number } | string | undefined,
+        defaultLocation?: { lat: number; lng: number }
+      ): Promise<{ lat: number; lng: number } | null> => {
+        // If undefined, return default
+        if (!input) return defaultLocation || null;
+
+        // If already coordinates, return as-is
+        if (typeof input === 'object' && 'lat' in input && 'lng' in input) {
+          return input;
+        }
+
+        // If string, check saved places first
+        if (typeof input === 'string') {
+          const savedPlaces = runtimeContext?.get("savedPlaces") as Record<string, { location: { lat: number; lng: number }; name: string; address: string }> | undefined;
+          const normalizedName = input.toLowerCase().trim();
+          
+          // Check saved places
+          if (savedPlaces) {
+            if (normalizedName === 'home' && savedPlaces.home) {
+              // Check if saved home is far from current location
+              const currentLocation = userLocation || defaultLocation;
+              if (currentLocation) {
+                const distanceKm = calculateDistance(currentLocation, savedPlaces.home.location);
+                // If home is more than 100km away, it's likely wrong (user might be traveling)
+                if (distanceKm > 100) {
+                  console.warn(`[get-directions] Saved home (${savedPlaces.home.address}) is ${distanceKm.toFixed(1)}km away from current location. Using current location instead.`);
+                  return currentLocation;
+                }
+              }
+              console.log(`[get-directions] Resolved "${input}" to saved home: ${savedPlaces.home.name}`);
+              return savedPlaces.home.location;
+            }
+            if (normalizedName === 'work' && savedPlaces.work) {
+              const currentLocation = userLocation || defaultLocation;
+              if (currentLocation) {
+                const distanceKm = calculateDistance(currentLocation, savedPlaces.work.location);
+                if (distanceKm > 100) {
+                  console.warn(`[get-directions] Saved work (${savedPlaces.work.address}) is ${distanceKm.toFixed(1)}km away from current location. Using current location instead.`);
+                  return currentLocation;
+                }
+              }
+              console.log(`[get-directions] Resolved "${input}" to saved work: ${savedPlaces.work.name}`);
+              return savedPlaces.work.location;
+            }
+            if (savedPlaces[normalizedName]) {
+              console.log(`[get-directions] Resolved "${input}" to saved favorite: ${savedPlaces[normalizedName].name}`);
+              return savedPlaces[normalizedName].location;
+            }
+          }
+
+          // If not found in saved places, geocode it
+          console.log(`[get-directions] Geocoding "${input}"...`);
+          const geocodeResults = await geocodingService.geocode(input);
+          if (geocodeResults && geocodeResults.length > 0) {
+            return geocodeResults[0].location;
+          }
+        }
+
+        return null;
+      };
 
       // Try to get user location from RuntimeContext as fallback for origin
       const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
       
-      // Use tool parameter OR fallback to RuntimeContext for origin
-      const origin = context.origin || userLocation;
+      // Resolve origin (can be string like "home" or coordinates)
+      const origin = await resolveLocation(context.origin, userLocation);
 
       if (!origin) {
         return {
@@ -131,19 +215,25 @@ export const getDirections = createTool({
         };
       }
 
+      // Resolve destination (can be string like "home" or coordinates)
+      const destination = await resolveLocation(context.destination);
+
+      if (!destination) {
+        return {
+          success: false,
+          error: "Could not resolve destination location. Please provide a valid address or place name.",
+        };
+      }
+
       // Log RuntimeContext usage for debugging
       if (!context.origin && userLocation) {
         console.log("[get-directions] Using origin from RuntimeContext:", userLocation);
       }
-
-      // Note: Removed incorrect writer.write() call that was causing AI SDK validation error
-      // The writer should use text-start/text-delta/text-end or custom data parts
-      const modeText = context.mode.toLowerCase();
       
       // Get directions
       const routes = await service.getDirections({
         origin: origin,
-        destination: context.destination,
+        destination: destination,
         travelMode: context.mode,
         departureTime: context.departureTime,
         alternatives: context.alternatives,
@@ -156,6 +246,26 @@ export const getDirections = createTool({
         };
       }
 
+      // Log transit data for verification (P0: Transit enrichment)
+      if (context.mode === "TRANSIT") {
+        console.log("[get-directions] Transit routes received:", routes.length);
+        routes.forEach((route, idx) => {
+          console.log(`[get-directions] Route ${idx + 1}:`, {
+            distance: `${(route.distanceMeters / 1000).toFixed(1)}km`,
+            duration: `${Math.round(route.durationSeconds / 60)}min`,
+            fare: route.transitFare ? `${route.transitFare.currencyCode} ${(parseInt(route.transitFare.units || '0') + (route.transitFare.nanos || 0) / 1000000000).toFixed(2)}` : 'N/A',
+            transitSteps: route.transitSteps?.map((step: any) => ({
+              line: step.transitLine?.nameShort || step.transitLine?.name,
+              vehicle: step.transitLine?.vehicle?.type,
+              headsign: step.headsign,
+              stops: step.stopCount,
+              departure: step.localizedValues?.departureTime?.time,
+              arrival: step.localizedValues?.arrivalTime?.time,
+            })) || [],
+          });
+        });
+      }
+
       // Find fastest route as primary
       const primaryRoute = routes.reduce((minRoute, route) =>
         route.durationSeconds < minRoute.durationSeconds ? route : minRoute
@@ -166,7 +276,13 @@ export const getDirections = createTool({
       const insights = generateDirectionInsights(primaryRoute);
 
       // Build map commands
-      const mapCommands: Array<{ type: "DRAW_ROUTE" | "PAN_TO"; payload: any }> = [];
+      const mapCommands: Array<{ type: "CLEAR_ROUTES" | "DRAW_ROUTE" | "PAN_TO"; payload: any }> = [];
+
+      // Clear old routes before showing new ones
+      mapCommands.push({
+        type: "CLEAR_ROUTES",
+        payload: {},
+      });
 
       // Color palette for different routes (distinct colors for each alternative)
       const routeColors = [
@@ -197,6 +313,9 @@ export const getDirections = createTool({
                 duration: route.durationSeconds,
                 travelMode: context.mode,
                 routeLabel: isPrimary ? "Recommended" : `Option ${index + 1}`,
+                // Include transit information if available
+                transitFare: route.transitFare,
+                transitSteps: route.transitSteps,
               },
             },
           });

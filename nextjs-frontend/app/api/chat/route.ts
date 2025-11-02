@@ -15,6 +15,7 @@ export type ChatRuntimeContext = {
     mapCenter?: { lat: number; lng: number };
     mapZoom?: number;
     mapBounds?: { north: number; south: number; east: number; west: number };
+    savedPlaces?: Record<string, { location: { lat: number; lng: number }; name: string; address: string }>;
 };
 
 export async function POST(req: Request) {
@@ -68,16 +69,21 @@ export async function POST(req: Request) {
             console.log("✅ [AI SDK Route] Map bounds SET in RuntimeContext:", context.mapBounds);
         }
 
+        if (context?.savedPlaces) {
+            runtimeContext.set("savedPlaces", context.savedPlaces);
+            console.log("✅ [AI SDK Route] Saved places SET in RuntimeContext:", Object.keys(context.savedPlaces));
+        }
+
         // Use AI SDK v5's createUIMessageStream to properly inject data parts
         const uiStream = createUIMessageStream({
             async execute({ writer }) {
                 // Get Mastra's agent stream
                 const mastraStream = await agent.stream(messages, {
-                    runtimeContext,
-                    format: "aisdk",  // Use Mastra's built-in AI SDK format
-                    maxSteps: 10,     // Allow up to 10 tool calls
-                    onStepFinish: (step: any) => {
-                        console.log("[AI SDK Route] Step finished:", step);
+            runtimeContext,
+            format: "aisdk",  // Use Mastra's built-in AI SDK format
+            maxSteps: 10,     // Allow up to 10 tool calls
+            onStepFinish: (step: any) => {
+                console.log("[AI SDK Route] Step finished:", step);
 
                         // Extract mapCommands from step.content (where tool results actually are)
                         const content = step.content || [];
@@ -114,11 +120,11 @@ export async function POST(req: Request) {
                                     // Log full structure for debugging
                                     console.log(`[AI SDK Route] ❌ No mapCommands found in ${toolName} output structure:`,
                                         JSON.stringify(output, null, 2));
-                                }
-                            }
                         }
                     }
-                });
+                }
+            }
+        });
 
                 // Merge Mastra's stream into our UI stream
                 writer.merge(mastraStream.toUIMessageStream());

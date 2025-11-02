@@ -11,6 +11,7 @@ export { calculateDistanceMatrix } from "./calculate-distance-matrix";
 export { mapControl } from "./map-control";
 export { mapObserve } from "./map-observe";
 export { navigateToPlace } from "./navigate-to-place";
+export { tripPlan } from "./trip-plan";
 
 // Re-export utilities
 export * from "./utils/distance-calculator";

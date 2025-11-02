@@ -5,7 +5,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Place, Location } from '@/lib/types';
 import { useMapState } from '@/app/hooks/useMapState';
 import { decodePolyline } from '@/lib/utils/polyline-decoder';
-import { RouteCarousel } from './RouteCarousel';
+import { ArtifactCarousel } from './ArtifactCarousel';
 
 interface MapViewProps {
     center: Location;
@@ -143,39 +143,101 @@ export function MapView({
             )}
 
             {/* Place markers from props */}
-            {places.map((place) => (
+            {places.map((place) => {
+                const placeId = place.id || `place-${place.location.lat}-${place.location.lng}`;
+                const isSelected = mapState.selectedPlaceId === placeId;
+                
+                return (
                 <Marker
-                    key={place.id}
+                        key={placeId}
                     position={place.location}
                     title={place.displayName || place.name || 'Place'}
-                    onClick={() => onMarkerClick?.(place)}
+                        onClick={() => {
+                            // Toggle selection when marker is clicked
+                            if (mapState.selectedPlaceId === placeId) {
+                                mapState.setSelectedPlace(undefined);
+                            } else {
+                                mapState.setSelectedPlace(placeId);
+                            }
+                            onMarkerClick?.(place);
+                        }}
                     icon={{
                         path: google.maps.SymbolPath.CIRCLE,
-                        scale: 8,
-                        fillColor: getMarkerColor(place),
-                        fillOpacity: 0.8,
+                            scale: isSelected ? 12 : 10, // Larger when selected
+                            fillColor: isSelected ? '#4285F4' : '#FF6B6B',
+                            fillOpacity: isSelected ? 1.0 : 0.9,
                         strokeColor: '#fff',
-                        strokeWeight: 2,
+                            strokeWeight: isSelected ? 3 : 2,
                     }}
+                        zIndex={isSelected ? 1000 : 500} // Bring selected to front
                 />
-            ))}
+                );
+            })}
 
             {/* Markers from map state (agent-driven searches) */}
-            {mapState.markers.map((marker) => (
+            {mapState.markers.map((marker) => {
+                const isSelected = mapState.selectedPlaceId === marker.id;
+                const isPlace = marker.type === 'place';
+                const isTripStop = marker.metadata?.isTripStop;
+                const stopNumber = marker.metadata?.stopNumber;
+                
+                // For trip stops, use numbered marker icon
+                if (isTripStop && stopNumber) {
+                    return (
                 <Marker
                     key={marker.id}
                     position={marker.position}
                     title={marker.title}
+                            onClick={() => {
+                                if (mapState.selectedPlaceId === marker.id) {
+                                    mapState.setSelectedPlace(undefined);
+                                } else {
+                                    mapState.setSelectedPlace(marker.id);
+                                }
+                            }}
                     icon={{
                         path: google.maps.SymbolPath.CIRCLE,
-                        scale: 8,
-                        fillColor: '#FF6B6B',
-                        fillOpacity: 0.8,
+                                scale: isSelected ? 14 : 12,
+                                fillColor: isSelected ? '#4285F4' : '#FF6B00',
+                                fillOpacity: isSelected ? 1.0 : 0.9,
                         strokeColor: '#fff',
-                        strokeWeight: 2,
+                                strokeWeight: isSelected ? 4 : 3,
+                            }}
+                            label={{
+                                text: String(stopNumber),
+                                color: '#fff',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
                     }}
+                            zIndex={isSelected ? 1000 : 600}
                 />
-            ))}
+                    );
+                }
+                
+                return (
+                    <Marker
+                        key={marker.id}
+                        position={marker.position}
+                        title={marker.title}
+                        onClick={() => {
+                            if (mapState.selectedPlaceId === marker.id) {
+                                mapState.setSelectedPlace(undefined);
+                            } else {
+                                mapState.setSelectedPlace(marker.id);
+                            }
+                        }}
+                        icon={{
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: isSelected ? 12 : (isPlace ? 10 : 8),
+                            fillColor: isSelected ? '#4285F4' : (isPlace ? '#FF6B6B' : '#9CA3AF'),
+                            fillOpacity: isSelected ? 1.0 : 0.9,
+                            strokeColor: isSelected ? '#fff' : '#fff',
+                            strokeWeight: isSelected ? 3 : 2,
+                        }}
+                        zIndex={isSelected ? 1000 : (isPlace ? 500 : 100)}
+                    />
+                );
+            })}
 
             {/* Route polyline from props */}
             {routePolyline && routePolyline.length > 1 && (
@@ -248,8 +310,8 @@ export function MapView({
             ))}
         </GoogleMap>
         
-        {/* Route Carousel Overlay */}
-        <RouteCarousel />
+        {/* Unified Artifact Carousel */}
+        <ArtifactCarousel />
     </div>
     );
 }

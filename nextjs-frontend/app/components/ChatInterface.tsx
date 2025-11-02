@@ -7,6 +7,7 @@ import { Send, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMapState } from '@/app/hooks/useMapState';
+import { useUserProfile } from '@/app/hooks/useUserProfile';
 
 interface ChatInterfaceProps {
     onPlaceSelect?: (place: any) => void;
@@ -30,6 +31,7 @@ function extractTextContent(message: any): string {
 export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const mapState = useMapState();
+    const userProfile = useUserProfile();
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [inputValue, setInputValue] = useState('');
     
@@ -78,11 +80,37 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                 // Use ref to get current location value (avoids closure issues)
                 const currentLocation = userLocationRef.current;
                 
+                // Prepare saved places for context (only send necessary data)
+                const savedPlaces: Record<string, { location: { lat: number; lng: number }; name: string; address: string }> = {};
+                if (userProfile.home) {
+                    savedPlaces.home = {
+                        location: userProfile.home.location,
+                        name: userProfile.home.name,
+                        address: userProfile.home.address,
+                    };
+                }
+                if (userProfile.work) {
+                    savedPlaces.work = {
+                        location: userProfile.work.location,
+                        name: userProfile.work.name,
+                        address: userProfile.work.address,
+                    };
+                }
+                // Add favorites
+                userProfile.favorites.forEach(fav => {
+                    savedPlaces[fav.name.toLowerCase()] = {
+                        location: fav.location,
+                        name: fav.name,
+                        address: fav.address,
+                    };
+                });
+                
                 const context = {
                     userLocation: currentLocation,
                     mapCenter: mapState.center,
                     mapZoom: mapState.zoom,
                     mapBounds: mapState.bounds,
+                    savedPlaces: Object.keys(savedPlaces).length > 0 ? savedPlaces : undefined,
                 };
                 
                 // Debug log to see what's being sent
