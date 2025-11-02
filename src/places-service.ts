@@ -209,9 +209,10 @@ class PlacesService {
             'reviews'
         ];
 
+        // For single place endpoint, field mask should NOT include 'places.' prefix
         const fieldMask = fields.length > 0 
-            ? `places.${fields.join(',places.')}`
-            : `places.${defaultFields.join(',places.')}`;
+            ? fields.join(',')
+            : defaultFields.join(',');
 
         try {
             const response = await fetch(

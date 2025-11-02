@@ -1,0 +1,149 @@
+================================================================================
+                    MAPOPS MASTRA SETUP - QUICK REFERENCE
+================================================================================
+
+CURRENT STATE:
+==============
+
+ACTIVE (✅):
+  - Next.js Frontend with embedded Mastra
+  - Location: /Users/ash/ashP/projects/yc_jam/nextjs-frontend/
+  - Running: YES (port 3000)
+  - Files: 2 (index.ts, cityAnalystAgent.ts)
+  - Model: OpenRouter + Claude 3.5 Sonnet
+  - Tools: None (0)
+  - Chat Flow: ChatInterface.tsx → /api/chat/route.ts → Local Mastra → OpenRouter
+
+INACTIVE (⚠️):
+  - Express Server with comprehensive tools
+  - Location: /Users/ash/ashP/projects/yc_jam/mastra-server/
+  - Running: NO (port 4111 unused)
+  - Files: 7+ (index.ts, agent, 5 tool modules)
+  - Model: OpenAI GPT-4o-mini
+  - Tools: 15+ across 5 modules
+  - Was supposed to be: Frontend → mastra-server → OpenAI + Tools
+
+DISCONNECTION:
+  - Frontend has dead code in lib/utils.ts
+  - Functions to call mastra-server EXIST but are NEVER USED
+  - No references to callMastraAgent(), parseQuery(), callTool() anywhere
+
+================================================================================
+                              ARCHITECTURE CHOICE
+================================================================================
+
+Choose ONE of these approaches:
+
+OPTION 1: CLEAN UP (Keep NextJS Only) - RECOMMENDED
+──────────────────────────────────────────────────
+  Action: Delete mastra-server/, clean dead code
+  Effort: 5 minutes
+  Result: Single codebase, single process
+  Next:   Add tools to nextjs-frontend/mastra/tools/ as needed
+  
+  Pros:  Simple, fast, no infrastructure
+  Cons:  All in Next.js process, API costs through OpenRouter
+
+OPTION 2: ACTIVATE SERVER (Use Separate Backend)
+─────────────────────────────────────────────────
+  Action: Wire up mastra-server calls in frontend
+  Effort: 30 minutes
+  Result: Separate frontend/backend services
+  Next:   Start mastra-server in parallel with frontend
+
+  Pros:  Separate concerns, tools ready, scalable
+  Cons:  Two processes, more complex, harder to develop
+
+OPTION 3: MERGE (Best of Both) - ALSO GOOD
+───────────────────────────────────────────
+  Action: Migrate tools to NextJS, delete server
+  Effort: 1 hour
+  Result: Single process with all functionality
+  Next:   Use tools in nextjs-frontend/mastra/tools/
+
+  Pros:  Integrated, performant, scalable
+  Cons:  Bigger Next.js process, need adapter for tools
+
+================================================================================
+                            CONFIGURATION STATUS
+================================================================================
+
+NextJS Frontend:
+  ✓ Google Maps API key: SET
+  ✗ OpenRouter API key: MISSING ← ADD THIS
+
+Express Server:
+  ✗ OpenAI API key: PLACEHOLDER (sk-your-openai-api-key-here)
+  ✓ Google Maps API key: SET
+
+================================================================================
+                              IMMEDIATE ACTIONS
+================================================================================
+
+TO GET CHAT WORKING NOW:
+  1. Add to nextjs-frontend/.env.local:
+     OPENROUTER_API_KEY=your_actual_key_here
+  
+  2. Restart dev server:
+     cd nextjs-frontend
+     npm run dev
+  
+  3. Chat should work (conversational only, no tools)
+
+TO DECIDE ON ARCHITECTURE:
+  1. Read /Users/ash/ashP/projects/yc_jam/MASTRA_SETUP_ANALYSIS.md
+  2. Pick Option 1, 2, or 3
+  3. Implement
+
+TO USE EXPRESS SERVER (Option 2):
+  1. cd mastra-server
+  2. Add real OPENAI_API_KEY to .env
+  3. npm run build
+  4. npm run start
+  5. Update nextjs-frontend to call it (wire up lib/utils.ts calls)
+
+================================================================================
+                                FILE LOCATIONS
+================================================================================
+
+Active Files:
+  /Users/ash/ashP/projects/yc_jam/nextjs-frontend/mastra/index.ts
+  /Users/ash/ashP/projects/yc_jam/nextjs-frontend/mastra/agents/cityAnalystAgent.ts
+  /Users/ash/ashP/projects/yc_jam/nextjs-frontend/app/api/chat/route.ts
+  /Users/ash/ashP/projects/yc_jam/nextjs-frontend/app/components/ChatInterface.tsx
+
+Inactive Files:
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/index.ts
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/agents/cityAnalystAgent.ts
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/tools/placesTools.ts
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/tools/routesTools.ts
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/tools/geocodingTools.ts
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/tools/roadsTools.ts
+  /Users/ash/ashP/projects/yc_jam/mastra-server/src/tools/aggregateTools.ts
+
+Dead Code:
+  /Users/ash/ashP/projects/yc_jam/nextjs-frontend/lib/utils.ts (lines 13-60)
+  - callMastraAgent()
+  - parseQuery()
+  - callTool()
+
+================================================================================
+                          RUNNING PROCESSES (NOW)
+================================================================================
+
+Active:
+  PID 54850: next dev -p 3000  (nextjs-frontend)
+
+Inactive:
+  mastra-server (not running, would be port 4111)
+
+To check:
+  ps aux | grep -E "(next|mastra)"
+
+================================================================================
+
+TLDR: Delete mastra-server/, add OPENROUTER_API_KEY, start coding tools.
+
+For details, see: /Users/ash/ashP/projects/yc_jam/MASTRA_SETUP_ANALYSIS.md
+
+================================================================================

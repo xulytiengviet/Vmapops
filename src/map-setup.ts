@@ -3,8 +3,6 @@
  * Handles Google Maps initialization and basic map configuration
  */
 
-
-
 let map: google.maps.Map | null = null;
 let userLocation: { lat: number; lng: number } | null = null;
 let userMarker: google.maps.Marker | null = null;
@@ -13,6 +11,7 @@ let routesService: any = null;
 let placesAggregateService: any = null;
 let geocodingService: any = null;
 let roadsService: any = null;
+// Note: infoWindowManager is declared in app.ts to avoid duplicate declaration
 
 /**
  * Initialize the Google Map
@@ -46,20 +45,35 @@ function initMap(): void {
 
     console.log('Map initialized successfully');
 
+    // Update mapOps with the actual map instance (it was null before)
+    if (typeof window !== 'undefined' && (window as any).mapOps) {
+        (window as any).mapOps.map = map;
+    }
+
     // Initialize all services
     if (typeof window.PlacesService !== 'undefined') {
         placesService = new window.PlacesService(map);
         console.log('Places Service initialized');
+        // Update mapOps with the service
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.placesService = placesService;
+        }
     }
 
     if (typeof window.RoutesService !== 'undefined') {
         routesService = new window.RoutesService(map);
         console.log('Routes Service initialized');
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.routesService = routesService;
+        }
     }
 
     if (typeof window.PlacesAggregateService !== 'undefined') {
         placesAggregateService = new window.PlacesAggregateService();
         console.log('Places Aggregate Service initialized');
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.placesAggregateService = placesAggregateService;
+        }
     }
 
     if (typeof window.GeocodingService !== 'undefined') {
@@ -68,12 +82,36 @@ function initMap(): void {
             geocodingService.init();
         }
         console.log('Geocoding Service initialized');
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.geocodingService = geocodingService;
+        }
     }
 
     if (typeof window.RoadsService !== 'undefined') {
         roadsService = new window.RoadsService();
         console.log('Roads Service initialized');
+        if (typeof window !== 'undefined' && (window as any).mapOps) {
+            (window as any).mapOps.roadsService = roadsService;
+        }
     }
+
+    // Initialize InfoWindow Manager (will be created in app.ts after InfoWindowManager class loads)
+    // infoWindowManager is created in app.ts to avoid duplicate declaration
+    console.log('InfoWindow Manager will be initialized in app.ts');
+    
+    // Trigger app initialization check after a short delay to ensure everything is ready
+    setTimeout(() => {
+        if (typeof window !== 'undefined' && (window as any).mapOps && (window as any).mapOps.map && (window as any).mapOps.placesService) {
+            console.log('Map and services are ready, triggering app initialization check');
+            // Dispatch custom event to notify app.ts that map is ready
+            window.dispatchEvent(new CustomEvent('mapReady'));
+        } else {
+            console.warn('Map or services not ready:', {
+                map: !!(window as any).mapOps?.map,
+                placesService: !!(window as any).mapOps?.placesService
+            });
+        }
+    }, 100);
 
     // Get user's current location
     getUserLocation();
@@ -249,7 +287,10 @@ if (typeof window !== 'undefined') {
         placesAggregateService,
         geocodingService,
         roadsService
+        // infoWindowManager is exported from app.ts
     };
+
+    // InfoWindowManager class will be exposed via info-window.js
 }
 
 // Make initMap available globally

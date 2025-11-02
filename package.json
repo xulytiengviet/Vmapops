@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "MapOps - Conversational City Analyst",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/inject-env.js",
     "watch": "tsc --watch",
-    "dev": "tsc --watch & npx http-server -p 8000 -c-1",
+    "dev": "npm run build && tsc --watch & npx http-server -p 8000 -c-1",
     "start": "npm run build && python3 -m http.server 8000 || python -m http.server 8000",
     "serve": "npm run build && npx http-server -p 8000 -c-1"
   },
@@ -23,6 +23,12 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "dotenv": "^17.2.3"
+    "@assistant-ui/react": "0.11.35",
+    "@assistant-ui/react-ai-sdk": "1.1.8",
+    "@mastra/ai-sdk": "^0.2.5",
+    "@openrouter/ai-sdk-provider": "^1.2.0",
+    "ai": "^5.0.86",
+    "dotenv": "^17.2.3",
+    "zod": "4.1.12"
   }
 }

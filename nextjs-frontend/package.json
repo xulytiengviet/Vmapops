@@ -1,0 +1,37 @@
+{
+  "name": "mapops-next",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "^0.5.100",
+    "@assistant-ui/react-ai-sdk": "^0.6.0",
+    "@mastra/core": "^0.23.3",
+    "@openrouter/ai-sdk-provider": "^1.2.0",
+    "@react-google-maps/api": "^2.19.0",
+    "ai": "^5.0.86",
+    "clsx": "^2.0.0",
+    "lucide-react": "^0.408.0",
+    "next": "^15.0.0",
+    "process": "^0.11.10",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/google.maps": "^3.55.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.55.0",
+    "eslint-config-next": "^15.0.0",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3"
+  }
+}
