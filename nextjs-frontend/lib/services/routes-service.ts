@@ -68,7 +68,10 @@ export class RoutesService {
       const destination = this.normalizeLocation(options.destination);
 
       // Routes API v2 expects latLng format: { latitude, longitude }
-      const body = {
+      const travelMode = options.travelMode || "DRIVE";
+      const isTransit = travelMode === "TRANSIT";
+      
+      const body: any = {
         origin: {
           location: {
             latLng: {
@@ -85,17 +88,28 @@ export class RoutesService {
             },
           },
         },
-        travelMode: options.travelMode || "DRIVE",
-        routingPreference: "TRAFFIC_AWARE", // Traffic-aware routing
-        computeAlternativeRoutes: options.alternatives || false,
-        routeModifiers: {
-          avoidTolls: false,
-          avoidHighways: false,
-          avoidFerries: false,
-        },
+        travelMode: travelMode,
+        computeAlternativeRoutes: options.alternatives !== false, // Default to true
         languageCode: "en-US",
         units: "METRIC",
       };
+
+      // TRANSIT mode requires different routing preference and doesn't support routeModifiers
+      if (isTransit) {
+        // For TRANSIT, use transitPreferences instead of routingPreference
+        body.transitPreferences = {
+          routingPreference: "LESS_WALKING", // or "FEWER_TRANSFERS"
+          allowedTravelModes: ["BUS", "SUBWAY", "TRAIN", "LIGHT_RAIL", "RAIL"],
+        };
+      } else {
+        // Non-transit modes use traffic-aware routing
+        body.routingPreference = "TRAFFIC_AWARE";
+        body.routeModifiers = {
+          avoidTolls: false,
+          avoidHighways: false,
+          avoidFerries: false,
+        };
+      }
 
       if (options.departureTime) {
         (body as any).departureTime = options.departureTime;
@@ -103,25 +117,36 @@ export class RoutesService {
 
       console.log('[RoutesService] Request body:', JSON.stringify(body, null, 2));
 
+      // Build field mask - include transit details for TRANSIT mode
+      const fieldMask = [
+        "routes.polyline.encodedPolyline",
+        "routes.legs",
+        "routes.distanceMeters",
+        "routes.duration",
+        "routes.legs.distanceMeters",
+        "routes.legs.duration",
+        "routes.legs.steps.distanceMeters",
+        "routes.legs.steps.navigationInstruction",
+        "routes.legs.startLocation",
+        "routes.legs.endLocation",
+      ];
+
+      // Add transit-specific fields for TRANSIT mode
+      if (isTransit) {
+        fieldMask.push(
+          "routes.legs.steps.transitDetails",
+          "routes.legs.steps.travelMode",
+          "routes.travelAdvisory.transitFare"
+        );
+      }
+
       const response = await fetch(this.baseUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": this.apiKey,
           // Field mask is required by Routes API v2
-          // Request only the fields we actually use
-          "X-Goog-FieldMask": [
-            "routes.polyline.encodedPolyline",
-            "routes.legs",
-            "routes.distanceMeters",
-            "routes.duration",
-            "routes.legs.distanceMeters",
-            "routes.legs.duration",
-            "routes.legs.steps.distanceMeters",
-            "routes.legs.steps.navigationInstruction",
-            "routes.legs.startLocation",
-            "routes.legs.endLocation",
-          ].join(","),
+          "X-Goog-FieldMask": fieldMask.join(","),
         },
         body: JSON.stringify(body),
       });

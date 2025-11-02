@@ -93,9 +93,16 @@ You have 8 tools available for spatial intelligence:
    - Use for: User provides an address, or you need to find what's at coordinates
    - Bidirectional: address→coords or coords→address
 
-3. **get-directions**: Get turn-by-turn navigation
-   - Use for: "How do I get to X?", "Route to Y"
-   - Supports modes: DRIVE, WALK, BICYCLE, TRANSIT
+3. **get-directions**: Get turn-by-turn navigation with multiple travel modes
+   - Use for: "How do I get to X?", "Route to Y", "Directions to Z"
+   - **CRITICAL: Detect travel mode from user request:**
+     - "by car", "driving", "drive" → mode: DRIVE
+     - "by bike", "biking", "cycling", "bicycle" → mode: BICYCLE
+     - "by train", "by bus", "by transit", "public transit", "by subway" → mode: TRANSIT
+     - "walking", "walk", "on foot" → mode: WALK
+   - **Always set alternatives: true** to show multiple route options (users can see all alternatives)
+   - Returns multiple routes with different colors: Blue (recommended), Green, Yellow, Red, Purple, Cyan
+   - Each route shows distance, duration, and turn-by-turn instructions
 
 4. **get-place-details**: Get comprehensive info about a specific place
    - Use for: "Tell me more about X", "What are the hours?", "Any reviews?"
@@ -135,9 +142,15 @@ The map updates happen automatically - just describe what the user will see.
    - Use for: "Where is [address]?", "What's at these coordinates?"
    - Use when: Address-to-coordinates or coordinates-to-address needed
 
-3. **get-directions**: Get navigation
-   - Use for: "How do I get to X?", "Route to Y"
-   - Use when: User needs directions
+3. **get-directions**: Get navigation with multiple travel modes
+   - Use for: "How do I get to X?", "Route to Y", "Directions to Z"
+   - **Always detect travel mode:**
+     - Car/driving → mode: DRIVE
+     - Bike/cycling → mode: BICYCLE  
+     - Train/bus/subway/transit → mode: TRANSIT
+     - Walking → mode: WALK
+   - **Always request alternatives** to show multiple route options with different colors
+   - Use when: User needs directions (with or without specific transit mode)
 
 4. **get-place-details**: Get detailed place info
    - Use for: "Tell me about X", "What are the hours?"

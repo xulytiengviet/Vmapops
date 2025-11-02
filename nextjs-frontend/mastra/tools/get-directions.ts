@@ -31,13 +31,13 @@ const getDirectionsSchema = z.object({
     .enum(["DRIVE", "WALK", "BICYCLE", "TRANSIT"])
     .optional()
     .default("DRIVE")
-    .describe("Travel mode (default: DRIVE)"),
+    .describe("Travel mode: DRIVE (car), WALK (walking), BICYCLE (biking), TRANSIT (public transit: bus/train/subway). Default: DRIVE"),
 
   alternatives: z
     .boolean()
     .optional()
-    .default(false)
-    .describe("Return alternative routes"),
+    .default(true)
+    .describe("Return alternative routes (default: true to show all options)"),
 
   departureTime: z
     .string()
@@ -96,16 +96,20 @@ const getDirectionsOutputSchema = z.object({
 export const getDirections = createTool({
   id: "get-directions",
   description: `
-    Get turn-by-turn directions from origin to destination.
+    Get turn-by-turn directions from origin to destination with multiple travel modes.
 
     Supports:
-    - Multiple travel modes: DRIVE, WALK, BICYCLE, TRANSIT
-    - Alternative routes (set alternatives: true)
-    - Real-time traffic (set departureTime)
+    - Multiple travel modes: DRIVE (car), WALK (walking), BICYCLE (biking), TRANSIT (public transit: bus/train/subway)
+    - Alternative routes are enabled by default (alternatives: true) to show all route options
+    - Real-time traffic for driving routes (set departureTime)
+    - Transit preferences for public transit routes
 
-    Returns: Routes with steps, distances, durations, and polylines for map visualization
+    Returns: Multiple routes with distinct colors (Blue=recommended, Green/Yellow/Red/Purple/Cyan=alternatives), each with steps, distances, durations, and polylines for map visualization
 
-    Use when: User asks "how do I get to", "directions to", "route from A to B"
+    Use when: 
+    - User asks "how do I get to X?", "directions to Y", "route from A to B"
+    - User specifies travel mode: "by car", "by bike", "by train", "by bus", "walking", etc.
+    - Always request alternatives to show multiple route options
   `,
   inputSchema: getDirectionsSchema,
   outputSchema: getDirectionsOutputSchema,
@@ -164,22 +168,35 @@ export const getDirections = createTool({
       // Build map commands
       const mapCommands: Array<{ type: "DRAW_ROUTE" | "PAN_TO"; payload: any }> = [];
 
-      // Draw all routes - primary in blue, alternatives in gray
+      // Color palette for different routes (distinct colors for each alternative)
+      const routeColors = [
+        "#4285F4", // Blue - primary route
+        "#34A853", // Green - alternative 1
+        "#FBBC04", // Yellow - alternative 2
+        "#EA4335", // Red - alternative 3
+        "#9C27B0", // Purple - alternative 4
+        "#00BCD4", // Cyan - alternative 5
+      ];
+
+      // Draw all routes with distinct colors
       routes.forEach((route, index) => {
         const isPrimary = index === primaryIdx;
         if (route.polyline) {
+          const color = routeColors[index % routeColors.length];
           mapCommands.push({
             type: "DRAW_ROUTE",
             payload: {
               polyline: route.polyline,
-              color: isPrimary ? "#4285F4" : "#9CA3AF", // Blue for primary, gray for alternatives
-              weight: isPrimary ? 4 : 2, // Thicker for primary
-              opacity: isPrimary ? 0.9 : 0.5, // More opaque for primary
+              color: color,
+              weight: isPrimary ? 4 : 3, // Thicker for primary
+              opacity: isPrimary ? 0.9 : 0.7, // More opaque for primary, but still visible for alternatives
               metadata: {
                 routeIndex: index,
                 isPrimary: isPrimary,
                 distance: route.distanceMeters,
                 duration: route.durationSeconds,
+                travelMode: context.mode,
+                routeLabel: isPrimary ? "Recommended" : `Option ${index + 1}`,
               },
             },
           });

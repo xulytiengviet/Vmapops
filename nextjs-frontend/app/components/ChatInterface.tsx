@@ -65,9 +65,17 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
     }, []);
 
     // Subscribe to separate SSE channel for mapCommands (Fix #2 - most reliable)
+    // Use ref for mapState to avoid recreating EventSource on every state change
+    const mapStateRef = useRef(mapState);
+    useEffect(() => {
+        mapStateRef.current = mapState;
+    }, [mapState]);
+
     useEffect(() => {
         console.log('[ChatInterface] Setting up EventSource for mapCommands');
         const es = new EventSource('/api/map/stream');
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
         
         es.onmessage = (event) => {
             try {
@@ -76,23 +84,30 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                     const commandTypes = data.commands.map((cmd: any) => cmd.type);
                     console.log(`[ChatInterface] ✅ Received ${data.commands.length} mapCommands from SSE:`, commandTypes.join(', '));
                     console.log('[ChatInterface] Full commands:', data.commands);
-                    mapState.executeMapCommands(data.commands);
+                    // Use ref to get latest mapState without dependency
+                    mapStateRef.current.executeMapCommands(data.commands);
+                    reconnectAttempts = 0; // Reset on successful message
                 }
             } catch (error) {
                 console.error('[ChatInterface] Error parsing SSE mapCommands:', error);
             }
         };
         
-        es.onerror = (error) => {
-            console.error('[ChatInterface] EventSource error:', error);
-            // Don't close on error - SSE will auto-reconnect
+        es.onerror = () => {
+            reconnectAttempts++;
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                console.error('[ChatInterface] EventSource error - too many reconnects, closing');
+                es.close();
+            } else {
+                console.warn(`[ChatInterface] EventSource error (attempt ${reconnectAttempts}/${maxReconnectAttempts}), will auto-reconnect`);
+            }
         };
         
         return () => {
             console.log('[ChatInterface] Closing EventSource');
             es.close();
         };
-    }, [mapState]);
+    }, []); // Empty dependency array - only set up once on mount
 
     // Use the AI SDK's useChat hook with DefaultChatTransport as per Mastra docs
     const { messages, status, error, sendMessage } = useChat({
