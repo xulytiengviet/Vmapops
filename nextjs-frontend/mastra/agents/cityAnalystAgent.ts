@@ -73,8 +73,8 @@ ${locationInfo}
 
 **When user says "near me" or "nearby":**
 - IMMEDIATELY call search-places
-- Use location: ${userLocation ? `{lat: ${userLocation.lat}, lng: ${userLocation.lng}}` : "user location not available"}
-- DO NOT ask for location - use what you have
+   - Use location: ${userLocation ? `{lat: ${userLocation.lat}, lng: ${userLocation.lng}}` : "user location not available"}
+   - DO NOT ask for location - use what you have
 
 **Saved Places:**
 - Users can save "home", "work", and favorites

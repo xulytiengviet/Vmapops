@@ -1,6 +1,7 @@
 'use client';
 
 import { useMapState } from '@/app/hooks/useMapState';
+import { RoutesService } from '@/lib/services/routes-service';
 import { Clock, MapPin, Route as RouteIcon, Star, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -67,6 +68,22 @@ function getModeIcon(mode: string): string {
     case 'DRIVE': return '🚗';
     default: return '📍';
   }
+}
+
+// Helper to adjust color brightness for alternative routes
+function adjustColorBrightness(hex: string, factor: number): string {
+  // Remove # if present
+  hex = hex.replace('#', '');
+  // Convert to RGB
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  // Adjust brightness
+  const newR = Math.max(0, Math.min(255, Math.round(r * (1 - factor))));
+  const newG = Math.max(0, Math.min(255, Math.round(g * (1 - factor))));
+  const newB = Math.max(0, Math.min(255, Math.round(b * (1 - factor))));
+  // Convert back to hex
+  return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 }
 
 // Route Card Component
@@ -305,9 +322,26 @@ export function ArtifactCarousel() {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [routeMode, setRouteMode] = useState<'WALK' | 'TRANSIT' | 'BICYCLE' | 'DRIVE'>('WALK');
+  const [isComputingRoutes, setIsComputingRoutes] = useState(false);
 
   const activeArtifact = artifacts.find(a => a.id === activeArtifactId);
   const activeIndex = artifacts.findIndex(a => a.id === activeArtifactId);
+
+  // Set initial route mode based on trip stops' travel mode
+  useEffect(() => {
+    if (activeArtifact?.type === 'trip' && mapState.tripStops && mapState.tripStops.length > 0) {
+      const firstStopMode = mapState.tripStops[0]?.travelMode;
+      if (firstStopMode && routeMode !== firstStopMode) {
+        // Only set if it's different from current mode and we have routes already
+        // Otherwise, the trip-plan tool already set the routes for the initial mode
+        const hasRoutes = mapState.routes.length > 0;
+        if (!hasRoutes) {
+          setRouteMode(firstStopMode as 'WALK' | 'TRANSIT' | 'BICYCLE' | 'DRIVE');
+        }
+      }
+    }
+  }, [activeArtifactId, mapState.tripStops]);
 
   const checkScrollability = () => {
     if (!scrollContainerRef.current) return;
@@ -350,6 +384,31 @@ export function ArtifactCarousel() {
       if (marker) {
         mapState.setCenter(marker.position);
       }
+      
+      // For trip stops, highlight routes connected to this stop
+      if (artifactType === 'trip' && marker?.metadata?.stopNumber) {
+        const stopNumber = marker.metadata.stopNumber;
+        // Find routes that connect to/from this stop
+        // A route connects to a stop if:
+        // - It starts at stopNumber (routeStartStop === stopNumber)
+        // - It ends at stopNumber (routeEndStop === stopNumber)
+        const connectedRoutes = mapState.routes.filter(route => {
+          const routeStartStop = route.metadata?.startStop;
+          const routeEndStop = route.metadata?.endStop;
+          return routeStartStop === stopNumber || routeEndStop === stopNumber;
+        });
+        
+        // If routes found, highlight the primary one
+        if (connectedRoutes.length > 0) {
+          const primaryRoute = connectedRoutes.find(r => r.metadata?.isPrimary) || connectedRoutes[0];
+          if (primaryRoute) {
+            mapState.setSelectedRoute(primaryRoute.id);
+          }
+        } else {
+          // No connected routes, clear selection
+          mapState.setSelectedRoute(undefined);
+        }
+      }
     }
   };
 
@@ -369,6 +428,69 @@ export function ArtifactCarousel() {
 
   const closeArtifact = () => {
     mapState.setActiveArtifact(undefined);
+  };
+
+  // Re-compute trip routes for a selected mode using client-side RoutesService
+  const recomputeTripRoutes = async (mode: 'WALK' | 'TRANSIT' | 'BICYCLE' | 'DRIVE') => {
+    const stops = mapState.tripStops || [];
+    if (!stops || stops.length < 2) return;
+    setIsComputingRoutes(true);
+    setRouteMode(mode);
+    try {
+      const service = new RoutesService();
+      // Clear existing routes first
+      mapState.clearRoutes();
+
+      // Color palette for different route alternatives per leg
+      const routeColors = ['#4285F4', '#34A853', '#FBBC04', '#EA4335', '#9C27B0', '#00BCD4'];
+
+      for (let i = 0; i < stops.length - 1; i++) {
+        const origin = stops[i].location;
+        const destination = stops[i + 1].location;
+
+        // For TRANSIT with waypoints, Google doesn't return alternatives when intermediates exist.
+        // We compute each leg independently here, which works for all modes.
+        const routes = await service.getDirections({
+          origin,
+          destination,
+          travelMode: mode,
+          alternatives: true,
+        });
+
+        if (routes && routes.length > 0) {
+          // Draw all alternatives for this leg
+          routes.forEach((r, idx) => {
+            // Use consistent color per leg, different shades for alternatives
+            const baseColor = routeColors[i % routeColors.length];
+            const alternativeColor = idx === 0 ? baseColor : adjustColorBrightness(baseColor, idx * 0.15);
+            
+            mapState.addRoute({
+              id: `trip-leg-${i}-alt-${idx}-${Date.now()}`,
+              polyline: r.polyline,
+              color: alternativeColor,
+              weight: idx === 0 ? 5 : 3,
+              opacity: idx === 0 ? 0.95 : 0.6,
+              metadata: {
+                legIndex: i,
+                startStop: i + 1,
+                endStop: i + 2,
+                isPrimary: idx === 0,
+                travelMode: mode,
+                durationSeconds: r.durationSeconds,
+                distanceMeters: r.distanceMeters,
+                transitFare: r.transitFare,
+                transitSteps: r.transitSteps,
+                routeLabel: idx === 0 ? `Leg ${i + 1}→${i + 2} (Recommended)` : `Leg ${i + 1}→${i + 2} • Option ${idx + 1}`,
+              },
+            });
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[ArtifactCarousel] Failed to recompute routes:', err);
+    } finally {
+      setIsComputingRoutes(false);
+    }
   };
 
   if (artifacts.length === 0 || !activeArtifact) {
@@ -439,6 +561,38 @@ export function ArtifactCarousel() {
               </h3>
             </div>
             
+            {/* Mode toggles for Trip artifacts */}
+            {activeArtifact.type === 'trip' && (
+              <div className="flex items-center gap-1 ml-3 pl-3 border-l border-gray-200">
+                <span className="text-xs text-gray-500 mr-1">Mode:</span>
+                <button
+                  onClick={() => recomputeTripRoutes('WALK')}
+                  disabled={isComputingRoutes}
+                  className={`px-2 py-1 rounded text-xs transition-all ${routeMode === 'WALK' ? 'bg-blue-100 text-blue-700 font-semibold' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  title="Walking"
+                >🚶 Walk</button>
+                <button
+                  onClick={() => recomputeTripRoutes('TRANSIT')}
+                  disabled={isComputingRoutes}
+                  className={`px-2 py-1 rounded text-xs transition-all ${routeMode === 'TRANSIT' ? 'bg-blue-100 text-blue-700 font-semibold' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  title="Public Transit"
+                >🚇 Transit</button>
+                <button
+                  onClick={() => recomputeTripRoutes('BICYCLE')}
+                  disabled={isComputingRoutes}
+                  className={`px-2 py-1 rounded text-xs transition-all ${routeMode === 'BICYCLE' ? 'bg-blue-100 text-blue-700 font-semibold' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  title="Bicycle"
+                >🚴 Bike</button>
+                <button
+                  onClick={() => recomputeTripRoutes('DRIVE')}
+                  disabled={isComputingRoutes}
+                  className={`px-2 py-1 rounded text-xs transition-all ${routeMode === 'DRIVE' ? 'bg-blue-100 text-blue-700 font-semibold' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  title="Drive"
+                >🚗 Drive</button>
+                {isComputingRoutes && <span className="text-xs text-gray-500 ml-2">Recomputing…</span>}
+              </div>
+            )}
+
             {/* Artifact History Navigation */}
             {artifacts.length > 1 && (
               <div className="flex items-center gap-1 ml-2 pl-2 border-l border-gray-300">
@@ -511,6 +665,53 @@ export function ArtifactCarousel() {
             </button>
           </div>
         </div>
+
+        {/* Route Legend for Trip artifacts */}
+        {activeArtifact.type === 'trip' && mapState.routes.length > 0 && (
+          <div className="mb-2 px-2 pb-2 border-b border-gray-200">
+            <div className="flex items-center gap-4 flex-wrap text-xs">
+              <span className="text-gray-500 font-medium">Route Legend:</span>
+              {(() => {
+                const routeColors = ['#4285F4', '#34A853', '#FBBC04', '#EA4335', '#9C27B0', '#00BCD4'];
+                const legGroups = new Map<number, any[]>();
+                
+                mapState.routes.forEach(route => {
+                  const legIndex = route.metadata?.legIndex;
+                  if (legIndex !== undefined) {
+                    if (!legGroups.has(legIndex)) {
+                      legGroups.set(legIndex, []);
+                    }
+                    legGroups.get(legIndex)!.push(route);
+                  }
+                });
+                
+                return Array.from(legGroups.entries()).map(([legIndex, routes]) => {
+                  const startStop = legIndex + 1;
+                  const endStop = legIndex + 2;
+                  const color = routeColors[legIndex % routeColors.length];
+                  const hasAlternatives = routes.length > 1;
+                  
+                  return (
+                    <div key={legIndex} className="flex items-center gap-1">
+                      <div
+                        className="w-4 h-1 rounded"
+                        style={{ backgroundColor: color }}
+                        title={`Leg ${startStop}→${endStop}${hasAlternatives ? ` (${routes.length} options)` : ''}`}
+                      />
+                      <span className="text-gray-600">
+                        {startStop}→{endStop}
+                        {hasAlternatives && <span className="text-gray-400 ml-1">({routes.length})</span>}
+                      </span>
+                    </div>
+                  );
+                });
+              })()}
+              <span className="text-gray-400 text-xs ml-auto">
+                💡 Click a stop card to highlight its route • Click routes on map to compare
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Cards */}
         <div

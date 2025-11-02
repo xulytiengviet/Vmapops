@@ -258,6 +258,25 @@ export function MapView({
                 const isSelected = mapState.selectedRouteId === route.id;
                 const baseWeight = route.weight || 3;
                 const selectedWeight = baseWeight + 2; // Make selected route thicker
+                
+                // Dim routes that aren't connected to selected stop
+                let routeOpacity = route.opacity || 0.9;
+                if (mapState.selectedPlaceId && mapState.selectedPlaceId.startsWith('trip-stop-')) {
+                  const selectedStopNumber = parseInt(mapState.selectedPlaceId.replace('trip-stop-', ''));
+                  const routeLegIndex = route.metadata?.legIndex;
+                  const routeStartStop = route.metadata?.startStop;
+                  const routeEndStop = route.metadata?.endStop;
+                  
+                  // Route is connected if it starts/ends at the selected stop
+                  const isConnected = routeStartStop === selectedStopNumber || routeEndStop === selectedStopNumber;
+                  
+                  if (!isSelected && !isConnected) {
+                    routeOpacity = 0.2; // Dim unconnected routes
+                  } else if (isConnected && !isSelected) {
+                    routeOpacity = Math.min(routeOpacity * 1.2, 1.0); // Slightly brighten connected routes
+                  }
+                }
+                
                 console.log(`[MapView] Rendering route ${route.id} with ${decodedPoints.length} points, selected: ${isSelected}`);
                 return (
                   <Polyline
@@ -265,7 +284,7 @@ export function MapView({
                     path={decodedPoints}
                     options={{
                       strokeColor: route.color,
-                      strokeOpacity: isSelected ? 1.0 : (route.opacity || 0.9),
+                      strokeOpacity: isSelected ? 1.0 : routeOpacity,
                       strokeWeight: isSelected ? selectedWeight : baseWeight,
                       clickable: true,
                       zIndex: isSelected ? 150 : (route.metadata?.isPrimary ? 100 : 50),
