@@ -1,0 +1,29 @@
+{
+  "name": "mapops",
+  "version": "1.0.0",
+  "description": "MapOps - Conversational City Analyst",
+  "scripts": {
+    "postbuild": "node scripts/inject-env.js",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsc --watch & npx http-server -p 8000 -c-1",
+    "start": "npm run build && python3 -m http.server 8000 || python -m http.server 8000",
+    "serve": "npm run build && npx http-server -p 8000 -c-1"
+  },
+  "keywords": [
+    "google-maps",
+    "places",
+    "ai",
+    "nlp",
+    "maps"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/google.maps": "^3.55.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3"
+  }
+}

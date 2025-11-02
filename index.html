@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapOps - Conversational City Analyst</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+
+        #chat-interface {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            padding: 20px;
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+        }
+
+        #query-input-container {
+            display: flex;
+            gap: 10px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        #query-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 24px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #query-input:focus {
+            border-color: #4285f4;
+        }
+
+        #query-input::placeholder {
+            color: #9aa0a6;
+        }
+
+        #search-btn {
+            padding: 12px 24px;
+            background: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #search-btn:hover {
+            background: #3367d6;
+        }
+
+        #search-btn:active {
+            background: #2b5aa0;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div id="chat-interface">
+        <div id="query-input-container">
+            <input 
+                type="text" 
+                id="query-input" 
+                placeholder="Ask MapOps... e.g., 'Show quiet cafés within 10 minutes walking from here, open now, with outdoor seating.'"
+                autocomplete="off"
+            >
+            <button id="search-btn">Search</button>
+        </div>
+    </div>
+
+    <!-- Load compiled TypeScript files (config.js is loaded first) -->
+    <script src="dist/config.js"></script>
+    
+    <!-- Load Google Maps JavaScript API -->
+    <script>
+        // Get API key from config (loaded from .env at build time)
+        const API_KEY = (typeof CONFIG !== 'undefined' && CONFIG.API_KEY) 
+            ? CONFIG.API_KEY 
+            : '';
+        
+        if (!API_KEY) {
+            document.body.innerHTML = `
+                <div style="padding: 40px; text-align: center; font-family: sans-serif;">
+                    <h1>⚠️ API Key Required</h1>
+                    <p>Please configure your Google Maps API key in .env file:</p>
+                    <ol style="text-align: left; max-width: 600px; margin: 20px auto;">
+                        <li>Create or update <code>.env</code> file with: <code>GOOGLE_API_KEY=your_key_here</code></li>
+                        <li>Run <code>npm run build</code> to inject the API key</li>
+                        <li>Refresh this page</li>
+                    </ol>
+                    <p><a href="https://console.cloud.google.com/google/maps-apis" target="_blank">Get API Key →</a></p>
+                </div>
+            `;
+        } else {
+            // Load the Maps JavaScript API with all required libraries
+            // places: Places Library for search, autocomplete, details
+            // routes: Routes Library for directions and distance calculations
+            // geometry: Utility functions for geometric calculations
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=places,routes,geometry&callback=initMap`;
+            script.async = true;
+            script.defer = true;
+            script.onerror = function() {
+                document.body.innerHTML = `
+                    <div style="padding: 40px; text-align: center; font-family: sans-serif;">
+                        <h1>❌ Failed to Load Google Maps</h1>
+                        <p>Please check your API key and make sure the following APIs are enabled:</p>
+                        <ul style="text-align: left; max-width: 600px; margin: 20px auto;">
+                            <li>Maps JavaScript API</li>
+                            <li>Places API (New)</li>
+                            <li>Routes API</li>
+                        </ul>
+                    </div>
+                `;
+            };
+            document.head.appendChild(script);
+        }
+    </script>
+    
+    <!-- Load compiled TypeScript files -->
+    <script src="dist/map-setup.js"></script>
+    <script src="dist/places-service.js"></script>
+    <script src="dist/routes-service.js"></script>
+    <script src="dist/places-aggregate-service.js"></script>
+    <script src="dist/geocoding-service.js"></script>
+    <script src="dist/roads-service.js"></script>
+    <script src="dist/app.js"></script>
+</body>
+</html>
