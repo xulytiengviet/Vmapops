@@ -65,7 +65,7 @@ const geocodeOutputSchema = z.object({
       }),
       mapCommands: z.array(
         z.object({
-          type: z.enum(["PAN_TO", "SHOW_ON_MAP"]),
+          type: z.enum(["PAN_TO", "SHOW_ON_MAP", "FIT_BOUNDS", "SET_ZOOM"] as any),
           payload: z.any(),
         })
       ),
@@ -132,7 +132,7 @@ export const geocode = createTool({
       const insights = generateGeocodeInsights(results, query);
 
       // Build map commands
-      const mapCommands: Array<{ type: "PAN_TO" | "SHOW_ON_MAP"; payload: any }> = [];
+      const mapCommands: Array<{ type: "PAN_TO" | "SHOW_ON_MAP" | "FIT_BOUNDS" | "SET_ZOOM"; payload: any }> = [];
 
       if (results.length > 0) {
         const firstResult = results[0];
@@ -142,6 +142,22 @@ export const geocode = createTool({
           type: "PAN_TO",
           payload: firstResult.location,
         });
+
+        // If bounds are available from geocoder, fit to them
+        if (firstResult.bounds?.northeast && firstResult.bounds?.southwest) {
+          mapCommands.push({
+            type: "FIT_BOUNDS",
+            payload: {
+              north: firstResult.bounds.northeast.lat,
+              south: firstResult.bounds.southwest.lat,
+              east: firstResult.bounds.northeast.lng,
+              west: firstResult.bounds.southwest.lng,
+            },
+          });
+        } else {
+          // Otherwise, set a reasonable zoom
+          mapCommands.push({ type: "SET_ZOOM", payload: 15 });
+        }
 
         // Show marker for all results
         if (results.length > 0) {
@@ -158,6 +174,11 @@ export const geocode = createTool({
             },
           });
         }
+      }
+
+      // Stream map commands immediately so the UI moves even if later tools fail
+      if (writer && mapCommands.length > 0) {
+        await writer.custom({ type: "data-mapCommands", data: { mapCommands } });
       }
 
       return {

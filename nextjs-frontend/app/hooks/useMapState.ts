@@ -25,18 +25,38 @@ export interface MapRoute {
   metadata?: any;
 }
 
+export interface MapBounds {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+}
+
+export interface MapHighlight {
+  id: string;
+  type: 'rectangle';
+  bounds: MapBounds;
+  color?: string;
+}
+
 export interface MapState {
   // Viewport
   center: { lat: number; lng: number };
   zoom: number;
+  bounds?: MapBounds;
 
   // Elements
   markers: MapMarker[];
   routes: MapRoute[];
+  highlights: MapHighlight[];
+
+  // Imperative requests to the map view (handled by MapView)
+  fitBoundsRequest?: { bounds: MapBounds; token: string };
 
   // Actions
   setCenter: (center: { lat: number; lng: number }) => void;
   setZoom: (zoom: number) => void;
+  setBounds: (bounds: MapBounds) => void;
   addMarker: (marker: MapMarker) => void;
   addMarkers: (markers: MapMarker[]) => void;
   removeMarker: (id: string) => void;
@@ -44,6 +64,8 @@ export interface MapState {
   addRoute: (route: MapRoute) => void;
   removeRoute: (id: string) => void;
   clearRoutes: () => void;
+  addHighlight: (highlight: MapHighlight) => void;
+  clearHighlights: () => void;
 
   // Execute map commands from tool responses
   executeMapCommands: (commands: any[]) => void;
@@ -55,10 +77,12 @@ export const useMapState = create<MapState>((set) => ({
   zoom: 12,
   markers: [],
   routes: [],
+  highlights: [],
 
   // Setters
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
+  setBounds: (bounds) => set({ bounds }),
 
   // Marker management
   addMarker: (marker) =>
@@ -91,9 +115,18 @@ export const useMapState = create<MapState>((set) => ({
 
   clearRoutes: () => set({ routes: [] }),
 
+  // Highlight management
+  addHighlight: (highlight) =>
+    set((state) => ({
+      highlights: [...state.highlights, highlight],
+    })),
+  clearHighlights: () => set({ highlights: [] }),
+
   // Execute commands from tool responses
   executeMapCommands: (commands) => {
+    console.log('[MapState] executeMapCommands called with', commands.length, 'commands');
     commands.forEach((cmd) => {
+      console.log('[MapState] Processing command:', cmd.type, cmd.payload);
       switch (cmd.type) {
         case 'SHOW_ON_MAP': {
           const { markers } = cmd.payload;
@@ -111,13 +144,27 @@ export const useMapState = create<MapState>((set) => ({
 
         case 'PAN_TO': {
           const location = cmd.payload;
+          console.log('[MapState] PAN_TO executing - setting center to:', location);
           set({ center: location });
           break;
         }
 
         case 'DRAW_ROUTE': {
           const { polyline, color, weight, opacity, metadata } = cmd.payload;
-          console.log('[MapState] DRAW_ROUTE received:', { color, weight, opacity, isPrimary: metadata?.isPrimary });
+          console.log('[MapState] DRAW_ROUTE received:', { 
+            hasPolyline: !!polyline,
+            polylineLength: polyline?.length || 0,
+            color, 
+            weight, 
+            opacity, 
+            isPrimary: metadata?.isPrimary 
+          });
+          
+          if (!polyline) {
+            console.error('[MapState] DRAW_ROUTE missing polyline!');
+            break;
+          }
+          
           const route: MapRoute = {
             id: `route-${Date.now()}-${Math.random()}`,
             polyline,
@@ -126,14 +173,16 @@ export const useMapState = create<MapState>((set) => ({
             opacity: opacity || 0.9,
             metadata,
           };
-          set((state) => ({
-            routes: [...state.routes, route],
-          }));
-          console.log('[MapState] Route added, total routes:', (state: any) => state.routes.length);
+          set((state) => {
+            const newRoutes = [...state.routes, route];
+            console.log('[MapState] Route added, total routes:', newRoutes.length);
+            return { routes: newRoutes };
+          });
           break;
         }
 
         case 'SET_ZOOM': {
+          console.log('[MapState] SET_ZOOM executing - setting zoom to:', cmd.payload);
           set({ zoom: cmd.payload });
           break;
         }
@@ -145,6 +194,39 @@ export const useMapState = create<MapState>((set) => ({
 
         case 'CLEAR_ROUTES': {
           set({ routes: [] });
+          break;
+        }
+
+        case 'FIT_BOUNDS': {
+          const bounds = cmd.payload;
+          console.log('[MapState] FIT_BOUNDS executing - setting fitBoundsRequest:', bounds);
+          if (bounds && typeof bounds === 'object') {
+            set({ fitBoundsRequest: { bounds, token: `${Date.now()}-${Math.random()}` } });
+          }
+          break;
+        }
+
+        case 'HIGHLIGHT_AREA': {
+          const payload = cmd.payload;
+          if (payload?.bounds) {
+            const id = `highlight-${Date.now()}-${Math.random()}`;
+            set((state) => ({
+              highlights: [
+                ...state.highlights,
+                {
+                  id,
+                  type: 'rectangle',
+                  bounds: payload.bounds,
+                  color: payload.color || '#22c55e',
+                },
+              ],
+            }));
+          }
+          break;
+        }
+
+        case 'CLEAR_HIGHLIGHTS': {
+          set({ highlights: [] });
           break;
         }
 

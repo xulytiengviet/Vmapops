@@ -41,9 +41,37 @@ export default function Home() {
                     setMapCenter(location);
                 },
                 (err) => {
-                    console.error('Geolocation error:', err);
+                    // Handle geolocation errors gracefully
+                    const errorMessage = err.message || 'Geolocation error';
+                    const errorCode = err.code;
+                    
+                    // Log detailed error info for debugging
+                    console.warn('Geolocation error:', {
+                        code: errorCode,
+                        message: errorMessage,
+                        fullError: err,
+                    });
+                    
+                    // Common error codes:
+                    // 1 = PERMISSION_DENIED
+                    // 2 = POSITION_UNAVAILABLE
+                    // 3 = TIMEOUT
+                    if (errorCode === 1) {
+                        console.info('User denied geolocation permission - location features will be limited');
+                    } else if (errorCode === 2) {
+                        console.info('Geolocation position unavailable - using default location');
+                    } else if (errorCode === 3) {
+                        console.info('Geolocation request timeout - using default location');
+                    }
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 300000, // Cache for 5 minutes
                 }
             );
+        } else {
+            console.warn('Geolocation is not supported by this browser');
         }
     }, []);
 

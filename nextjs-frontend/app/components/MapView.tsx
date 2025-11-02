@@ -1,6 +1,6 @@
 'use client';
 
-import { GoogleMap, Marker, Polyline } from '@react-google-maps/api';
+import { GoogleMap, Marker, Polyline, Rectangle } from '@react-google-maps/api';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Place, Location } from '@/lib/types';
 import { useMapState } from '@/app/hooks/useMapState';
@@ -26,6 +26,7 @@ export function MapView({
     const mapRef = useRef<google.maps.Map | null>(null);
     const [routePolyline] = useState<Location[] | null>(null);
     const mapState = useMapState();
+    const [mapReady, setMapReady] = useState(false);
 
     // Log map state changes for debugging
     useEffect(() => {
@@ -46,7 +47,16 @@ export function MapView({
 
     const onLoad = useCallback((map: google.maps.Map) => {
         mapRef.current = map;
-    }, []);
+        // Initialize starting view
+        try {
+            map.setCenter(center as any);
+            map.setZoom(zoom as any);
+        } catch {}
+        // Mark map ready after first idle to ensure tiles/viewport initialized
+        map.addListener('idle', () => {
+            setMapReady(true);
+        });
+    }, [center, zoom]);
 
     const onUnmount = useCallback(() => {
         mapRef.current = null;
@@ -60,13 +70,54 @@ export function MapView({
         return '#4285F4'; // Blue for regular places
     };
 
+    // Update bounds in global state when map bounds change
+    const handleBoundsChanged = useCallback(() => {
+        const map = mapRef.current;
+        if (!map) return;
+        const b = map.getBounds();
+        if (!b) return;
+        const ne = b.getNorthEast();
+        const sw = b.getSouthWest();
+        mapState.setBounds({
+            north: ne.lat(),
+            south: sw.lat(),
+            east: ne.lng(),
+            west: sw.lng(),
+        });
+    }, [mapState]);
+
+    // React to fitBounds requests from agent commands
+    useEffect(() => {
+        if (!mapRef.current || !mapState.fitBoundsRequest) return;
+        const { bounds } = mapState.fitBoundsRequest;
+        const googleBounds = new google.maps.LatLngBounds(
+            { lat: bounds.south, lng: bounds.west },
+            { lat: bounds.north, lng: bounds.east }
+        );
+        mapRef.current.fitBounds(googleBounds);
+    }, [mapState.fitBoundsRequest?.token]);
+
+    // Imperatively update map when store center changes
+    useEffect(() => {
+        if (mapRef.current && mapReady && mapState.center) {
+            console.log('[MapView] Imperatively panning map to', mapState.center);
+            mapRef.current.panTo(mapState.center);
+        }
+    }, [mapState.center, mapReady]);
+
+    useEffect(() => {
+        if (mapRef.current && mapReady && typeof mapState.zoom === 'number') {
+            console.log('[MapView] Imperatively setting zoom to', mapState.zoom);
+            mapRef.current.setZoom(mapState.zoom);
+        }
+    }, [mapState.zoom, mapReady]);
+
     return (
         <GoogleMap
             mapContainerStyle={containerStyle}
-            center={mapState.center || center}
-            zoom={mapState.zoom || zoom}
             onLoad={onLoad}
             onUnmount={onUnmount}
+            onBoundsChanged={handleBoundsChanged}
             options={{
                 streetViewControl: false,
                 mapTypeControl: true,
@@ -162,6 +213,28 @@ export function MapView({
                 return null;
               }
             })}
+
+            {/* Highlights from map state (agent-driven highlights) */}
+            {mapState.highlights.map((h) => (
+              <Rectangle
+                key={h.id}
+                bounds={{
+                  north: h.bounds.north,
+                  south: h.bounds.south,
+                  east: h.bounds.east,
+                  west: h.bounds.west,
+                }}
+                options={{
+                  strokeColor: h.color || '#22c55e',
+                  strokeOpacity: 0.9,
+                  strokeWeight: 2,
+                  fillColor: h.color || '#22c55e',
+                  fillOpacity: 0.1,
+                  clickable: false,
+                  zIndex: 25,
+                }}
+              />
+            ))}
         </GoogleMap>
     );
 }

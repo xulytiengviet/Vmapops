@@ -7,7 +7,6 @@ import { Send, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMapState } from '@/app/hooks/useMapState';
-import type { AgentDataPart, WorkflowDataPart, NetworkDataPart } from '@mastra/ai-sdk';
 
 interface ChatInterfaceProps {
     onPlaceSelect?: (place: any) => void;
@@ -65,6 +64,36 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         }
     }, []);
 
+    // Subscribe to separate SSE channel for mapCommands (Fix #2 - most reliable)
+    useEffect(() => {
+        console.log('[ChatInterface] Setting up EventSource for mapCommands');
+        const es = new EventSource('/api/map/stream');
+        
+        es.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.commands && Array.isArray(data.commands)) {
+                    const commandTypes = data.commands.map((cmd: any) => cmd.type);
+                    console.log(`[ChatInterface] ✅ Received ${data.commands.length} mapCommands from SSE:`, commandTypes.join(', '));
+                    console.log('[ChatInterface] Full commands:', data.commands);
+                    mapState.executeMapCommands(data.commands);
+                }
+            } catch (error) {
+                console.error('[ChatInterface] Error parsing SSE mapCommands:', error);
+            }
+        };
+        
+        es.onerror = (error) => {
+            console.error('[ChatInterface] EventSource error:', error);
+            // Don't close on error - SSE will auto-reconnect
+        };
+        
+        return () => {
+            console.log('[ChatInterface] Closing EventSource');
+            es.close();
+        };
+    }, [mapState]);
+
     // Use the AI SDK's useChat hook with DefaultChatTransport as per Mastra docs
     const { messages, status, error, sendMessage } = useChat({
         transport: new DefaultChatTransport({
@@ -77,6 +106,7 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                     userLocation: currentLocation,
                     mapCenter: mapState.center,
                     mapZoom: mapState.zoom,
+                    mapBounds: mapState.bounds,
                 };
                 
                 // Debug log to see what's being sent
@@ -97,50 +127,6 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         }),
         onError: (error) => {
             console.error('[ChatInterface] Chat error:', error);
-        },
-        // Handle custom data parts during streaming (not just on finish)
-        onData: (dataPart) => {
-            console.log('[ChatInterface] Data part received:', dataPart);
-            
-            // Handle custom data parts from tools (e.g., mapCommands)
-            // These are sent via writer.custom() in tool execution
-            // Note: Custom data parts must start with 'data-' prefix per AI SDK requirements
-            if (dataPart.type === 'data-mapCommands' && dataPart.data) {
-                console.log('[ChatInterface] Executing mapCommands from stream:', dataPart.data);
-                // Extract the mapCommands from the data wrapper
-                // Type assertion needed as dataPart.data is typed as {}
-                const dataWithCommands = dataPart.data as { mapCommands?: any[] };
-                const mapCommands = dataWithCommands.mapCommands;
-                if (mapCommands) {
-                    console.log('[ChatInterface] Map commands to execute:', mapCommands);
-                    mapState.executeMapCommands(mapCommands);
-                }
-            }
-        },
-        onFinish: ({ message }) => {
-            console.log('[ChatInterface] Message finished:', message);
-            
-            // Process any data parts for mapCommands that weren't caught during streaming
-            if (message.parts) {
-                message.parts.forEach((part: any) => {
-                    // Handle standard data parts
-                    if (part.type === 'data' && part.data?.mapCommands) {
-                        console.log('[ChatInterface] Executing mapCommands from finished message:', part.data.mapCommands);
-                        mapState.executeMapCommands(part.data.mapCommands);
-                    }
-
-                    // Handle Mastra-specific data parts (agent, workflow, network)
-                    if (part.type === 'data-tool-agent' ||
-                        part.type === 'data-tool-workflow' ||
-                        part.type === 'data-tool-network') {
-                        const data = part.data;
-                        if (data?.mapCommands) {
-                            console.log('[ChatInterface] Executing tool mapCommands:', data.mapCommands);
-                            mapState.executeMapCommands(data.mapCommands);
-                        }
-                    }
-                });
-            }
         },
     });
 

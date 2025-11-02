@@ -14,6 +14,9 @@ import {
     getDirections,
     getPlaceDetails,
     calculateDistanceMatrix,
+    mapControl,
+    mapObserve,
+    navigateToPlace,
 } from "../tools";
 
 // Define runtime context type
@@ -21,6 +24,7 @@ export type CityAnalystRuntimeContext = {
     userLocation?: { lat: number; lng: number };
     mapCenter?: { lat: number; lng: number };
     mapZoom?: number;
+    mapBounds?: { north: number; south: number; east: number; west: number };
 };
 
 // Initialize OpenRouter provider
@@ -66,12 +70,20 @@ ${locationInfo}
    - "How do I get to" → MUST call get-directions
    - "Show me [places]" → MUST call search-places
    - "Coffee/food/restaurants near me" → MUST call search-places
+   - "Go to [place]" / "Move to [place]" / "Navigate to [place]" → MUST call navigate-to-place
+   - "Zoom to [level]" or "Zoom in/out" → MUST call map-control with setZoom
+   - "Pan to [location]" → MUST call map-control with panTo
 
-5. **NEVER give a conversational response without tool data for location queries**
+5. **NEVER claim actions you didn't perform - ONLY describe what tools actually did**
+   - If you call geocode, you can say "I found the location" but NOT "I zoomed" unless you called map-control
+   - If you call map-control with setZoom: 15, THEN you can say "I zoomed to level 15"
+   - NEVER say "I've navigated" or "I've zoomed" unless you actually called map-control tool
+
+6. **NEVER give a conversational response without tool data for location queries**
 
 ## Your Core Capabilities
 
-You have 5 tools available for spatial intelligence:
+You have 8 tools available for spatial intelligence:
 
 1. **search-places**: Find places by text search or nearby location
    - Use for: "Find coffee shops", "What restaurants are near me?"
@@ -90,6 +102,20 @@ You have 5 tools available for spatial intelligence:
 
 5. **calculate-distance-matrix**: Compare distances/times from multiple origins
    - Use for: Finding closest restaurant from multiple locations
+
+6. **map-control**: Control the map viewport and layers
+   - Use for: Pan/zoom the map, fit bounds around results, clear markers/routes/highlights
+   - CRITICAL: When user asks to "zoom to [level]" → MUST call map-control with setZoom parameter (you may also use navigate-to-place if a place is provided)
+   - CRITICAL: When user asks to "pan to [location]" and you already know the coordinates → MUST call map-control with panTo parameter
+   - Best used for follow-up adjustments once you already have coordinates/markers on the map
+
+7. **map-observe**: Observe the current viewport and optionally sample places
+   - Use for: Summarizing what's visible, highlighting the area, or sampling places for a quick overview
+
+8. **navigate-to-place**: Geocode and navigate the map in one shot
+   - Use for: "Go to / Move to / Navigate to [place]" (optionally with zoom level)
+   - Automatically pans, fits bounds, drops marker, and sets zoom if provided
+   - Preferred when user provides a place name + optional zoom level (no manual chaining needed)
 
 ## Response Format
 
@@ -148,5 +174,8 @@ The map updates happen automatically - just describe what the user will see.
         "get-directions": getDirections,
         "get-place-details": getPlaceDetails,
         "calculate-distance-matrix": calculateDistanceMatrix,
+        "map-control": mapControl,
+        "map-observe": mapObserve,
+        "navigate-to-place": navigateToPlace,
     },
 });

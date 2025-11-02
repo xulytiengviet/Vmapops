@@ -67,33 +67,74 @@ export class RoutesService {
       const origin = this.normalizeLocation(options.origin);
       const destination = this.normalizeLocation(options.destination);
 
+      // Routes API v2 expects latLng format: { latitude, longitude }
       const body = {
-        origin: { location: origin },
-        destination: { location: destination },
+        origin: {
+          location: {
+            latLng: {
+              latitude: origin.lat,
+              longitude: origin.lng,
+            },
+          },
+        },
+        destination: {
+          location: {
+            latLng: {
+              latitude: destination.lat,
+              longitude: destination.lng,
+            },
+          },
+        },
         travelMode: options.travelMode || "DRIVE",
+        routingPreference: "TRAFFIC_AWARE", // Traffic-aware routing
+        computeAlternativeRoutes: options.alternatives || false,
         routeModifiers: {
           avoidTolls: false,
           avoidHighways: false,
           avoidFerries: false,
         },
-        computeAlternativeRoutes: options.alternatives || false,
+        languageCode: "en-US",
+        units: "METRIC",
       };
 
       if (options.departureTime) {
         (body as any).departureTime = options.departureTime;
       }
 
+      console.log('[RoutesService] Request body:', JSON.stringify(body, null, 2));
+
       const response = await fetch(this.baseUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": this.apiKey,
+          // Field mask is required by Routes API v2
+          // Request only the fields we actually use
+          "X-Goog-FieldMask": [
+            "routes.polyline.encodedPolyline",
+            "routes.legs",
+            "routes.distanceMeters",
+            "routes.duration",
+            "routes.legs.distanceMeters",
+            "routes.legs.duration",
+            "routes.legs.steps.distanceMeters",
+            "routes.legs.steps.navigationInstruction",
+            "routes.legs.startLocation",
+            "routes.legs.endLocation",
+          ].join(","),
         },
         body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(`Routes API error: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('[RoutesService] API Error Response:', errorText);
+        try {
+          const errorJson = JSON.parse(errorText);
+          throw new Error(`Routes API error: ${response.statusText} - ${JSON.stringify(errorJson)}`);
+        } catch {
+          throw new Error(`Routes API error: ${response.statusText} - ${errorText}`);
+        }
       }
 
       const data = await response.json();
@@ -139,6 +180,14 @@ export class RoutesService {
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": this.apiKey,
+          // Required by Distance Matrix API v2
+          "X-Goog-FieldMask": [
+            "originIndex",
+            "destinationIndex",
+            "duration",
+            "distanceMeters",
+            "status",
+          ].join(","),
         },
         body: JSON.stringify(body),
       });
@@ -147,18 +196,77 @@ export class RoutesService {
         throw new Error(`Distance Matrix API error: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      // computeRouteMatrix returns an NDJSON stream (one JSON object per line)
+      const text = await response.text();
+      const lines = text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
 
-      // Map results to 2D array
-      return (data.rows || []).map((row: any) =>
-        (row.elements || []).map((element: any) => ({
-          distance: element.distance?.text || "N/A",
-          distanceMeters: element.distance?.value || 0,
-          duration: element.duration?.text || "N/A",
-          durationSeconds: element.duration?.value || 0,
-          status: element.status,
+      const elements: Array<{
+        originIndex: number;
+        destinationIndex: number;
+        duration?: { seconds?: number };
+        distanceMeters?: number;
+        status?: string;
+      }> = [];
+
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line);
+          elements.push(obj);
+        } catch {}
+      }
+
+      if (elements.length === 0) {
+        return [];
+      }
+
+      const numOrigins =
+        Math.max(...elements.map((e) => e.originIndex ?? 0)) + 1;
+      const numDestinations =
+        Math.max(...elements.map((e) => e.destinationIndex ?? 0)) + 1;
+
+      // Initialize matrix
+      const matrix: any[][] = Array.from({ length: numOrigins }, () =>
+        Array.from({ length: numDestinations }, () => ({
+          distance: "N/A",
+          distanceMeters: 0,
+          duration: "N/A",
+          durationSeconds: 0,
+          status: "UNKNOWN",
         }))
       );
+
+      const toTextDistance = (meters: number) => {
+        if (meters < 1000) return `${meters} m`;
+        return `${(meters / 1000).toFixed(1)} km`;
+      };
+
+      const toTextDuration = (seconds: number) => {
+        const mins = Math.round(seconds / 60);
+        if (mins < 60) return `${mins} min`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${h} h ${m} min`;
+      };
+
+      for (const el of elements) {
+        const row = el.originIndex;
+        const col = el.destinationIndex;
+        if (row == null || col == null) continue;
+        const durationSec = el.duration?.seconds || 0;
+        const dist = el.distanceMeters || 0;
+        matrix[row][col] = {
+          distance: toTextDistance(dist),
+          distanceMeters: dist,
+          duration: toTextDuration(durationSec),
+          durationSeconds: durationSec,
+          status: el.status || "OK",
+        };
+      }
+
+      return matrix;
     } catch (error) {
       console.error("RoutesService.getDistanceMatrix error:", error);
       throw error;
@@ -191,7 +299,7 @@ export class RoutesService {
       steps: (leg.steps || []).map((step: any) => ({
         instruction: step.navigationInstruction?.instructions || "",
         distanceMeters: step.distanceMeters || 0,
-        durationSeconds: step.duration?.seconds || 0,
+        durationSeconds: step.duration?.seconds || step.staticDuration?.seconds || 0,
       })),
     }));
 
