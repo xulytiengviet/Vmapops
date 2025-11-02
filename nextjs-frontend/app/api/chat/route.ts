@@ -58,10 +58,23 @@ export async function POST(req: Request) {
         }
 
         // Generate response from agent with tool support and runtime context
+        console.log("[Chat API] Calling agent.generate with messages:", formattedMessages[formattedMessages.length - 1]);
         const result = await agent.generate(formattedMessages, {
             maxSteps: 10, // Allow up to 10 tool calls per request
             runtimeContext,
         });
+
+        // Debug: Log the full result structure
+        console.log("[Chat API] Agent result type:", typeof result);
+        console.log("[Chat API] Agent result keys:", result ? Object.keys(result) : "null");
+        if (result && typeof result === "object") {
+            console.log("[Chat API] Has toolResults?", "toolResults" in result);
+            console.log("[Chat API] Has text?", "text" in result);
+            if ("toolResults" in result) {
+                console.log("[Chat API] Tool results count:", (result as any).toolResults?.length);
+                console.log("[Chat API] Tool results:", JSON.stringify((result as any).toolResults, null, 2));
+            }
+        }
 
         // Extract text and map commands from result
         let responseText = "";
@@ -81,9 +94,16 @@ export async function POST(req: Request) {
                 responseText = "I received your message.";
             }
 
-            // Extract map commands if present
-            if ("mapCommands" in result && Array.isArray((result as any).mapCommands)) {
-                mapCommands = (result as any).mapCommands;
+            // Extract map commands from tool results
+            // mapCommands are nested in toolResults[].result.data.mapCommands
+            if ("toolResults" in result && Array.isArray((result as any).toolResults)) {
+                const toolResults = (result as any).toolResults;
+                for (const toolResult of toolResults) {
+                    if (toolResult.result?.data?.mapCommands && Array.isArray(toolResult.result.data.mapCommands)) {
+                        mapCommands.push(...toolResult.result.data.mapCommands);
+                        console.log(`[Chat API] Extracted ${toolResult.result.data.mapCommands.length} mapCommands from tool: ${toolResult.toolName}`);
+                    }
+                }
             }
         } else {
             responseText = "I received your message.";

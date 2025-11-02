@@ -147,17 +147,27 @@ export const getDirections = createTool({
       // Build map commands
       const mapCommands: Array<{ type: "DRAW_ROUTE" | "PAN_TO"; payload: any }> = [];
 
-      // Draw primary route
-      if (primaryRoute.polyline) {
-        mapCommands.push({
-          type: "DRAW_ROUTE",
-          payload: {
-            polyline: primaryRoute.polyline,
-            color: "#4285F4", // Google blue
-            weight: 3,
-          },
-        });
-      }
+      // Draw all routes - primary in blue, alternatives in gray
+      routes.forEach((route, index) => {
+        const isPrimary = index === primaryIdx;
+        if (route.polyline) {
+          mapCommands.push({
+            type: "DRAW_ROUTE",
+            payload: {
+              polyline: route.polyline,
+              color: isPrimary ? "#4285F4" : "#9CA3AF", // Blue for primary, gray for alternatives
+              weight: isPrimary ? 4 : 2, // Thicker for primary
+              opacity: isPrimary ? 0.9 : 0.5, // More opaque for primary
+              metadata: {
+                routeIndex: index,
+                isPrimary: isPrimary,
+                distance: route.distanceMeters,
+                duration: route.durationSeconds,
+              },
+            },
+          });
+        }
+      });
 
       // Pan to origin
       mapCommands.push({

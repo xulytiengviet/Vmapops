@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Send, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useMapState } from '@/app/hooks/useMapState';
 
 interface Message {
@@ -63,9 +65,18 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         setInput('');
         setLoading(true);
 
+        // Create assistant message that will be updated via streaming
+        const assistantMessageId = (Date.now() + 1).toString();
+        const assistantMessage: Message = {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '',
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+
         try {
-            // Call the API route with user location context
-            const response = await fetch('/api/chat', {
+            // Use streaming endpoint
+            const response = await fetch('/api/chat/stream', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -87,18 +98,93 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                 throw new Error(`API error: ${response.statusText}`);
             }
 
-            const data = await response.json();
-            const assistantMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'assistant',
-                content: data.content || 'I received your message.',
-            };
+            // Process Server-Sent Events
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            let fullContent = '';
 
-            setMessages((prev) => [...prev, assistantMessage]);
+            if (reader) {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-            // Execute map commands if present
-            if (data.mapCommands && Array.isArray(data.mapCommands)) {
-                mapState.executeMapCommands(data.mapCommands);
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const dataStr = line.slice(6);
+                            if (dataStr === '[DONE]') {
+                                console.log('[ChatInterface] Stream finished');
+                                continue;
+                            }
+
+                            try {
+                                const data = JSON.parse(dataStr);
+                                console.log('[ChatInterface] Stream event:', data.type);
+
+                                switch (data.type) {
+                                    case 'status':
+                                        // Show initial status
+                                        setMessages((prev) =>
+                                            prev.map((msg) =>
+                                                msg.id === assistantMessageId
+                                                    ? { ...msg, content: data.message || 'Processing...' }
+                                                    : msg
+                                            )
+                                        );
+                                        break;
+
+                                    case 'text-delta':
+                                        // Append text incrementally
+                                        fullContent += data.content;
+                                        setMessages((prev) =>
+                                            prev.map((msg) =>
+                                                msg.id === assistantMessageId
+                                                    ? { ...msg, content: fullContent }
+                                                    : msg
+                                            )
+                                        );
+                                        break;
+
+                                    case 'tool-call':
+                                        // Show tool usage notification
+                                        const toolMessage = fullContent + (fullContent ? '\n\n' : '') + (data.message || `Using ${data.toolName}...`);
+                                        setMessages((prev) =>
+                                            prev.map((msg) =>
+                                                msg.id === assistantMessageId
+                                                    ? { ...msg, content: toolMessage }
+                                                    : msg
+                                            )
+                                        );
+                                        break;
+
+                                    case 'finish':
+                                        // Final update with mapCommands
+                                        fullContent = data.content;
+                                        setMessages((prev) =>
+                                            prev.map((msg) =>
+                                                msg.id === assistantMessageId
+                                                    ? { ...msg, content: fullContent }
+                                                    : msg
+                                            )
+                                        );
+
+                                        if (data.mapCommands && Array.isArray(data.mapCommands)) {
+                                            console.log('[ChatInterface] Executing', data.mapCommands.length, 'mapCommands');
+                                            mapState.executeMapCommands(data.mapCommands);
+                                        }
+                                        break;
+
+                                    case 'error':
+                                        throw new Error(data.message);
+                                }
+                            } catch (e) {
+                                console.error('[ChatInterface] Error parsing stream data:', e);
+                            }
+                        }
+                    }
+                }
             }
         } catch (error) {
             const errorMessage: Message = {
@@ -138,12 +224,20 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                         className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                         <div
-                            className={`max-w-xs rounded-lg px-4 py-2 ${message.role === 'user'
+                            className={`max-w-md rounded-lg px-4 py-2 ${message.role === 'user'
                                 ? 'bg-blue-500 text-white'
                                 : 'bg-gray-100 text-gray-900'
                                 }`}
                         >
-                            <p className="text-sm">{message.content}</p>
+                            {message.role === 'user' ? (
+                                <p className="text-sm">{message.content}</p>
+                            ) : (
+                                <div className="text-sm prose prose-sm max-w-none prose-gray-900">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                        {message.content}
+                                    </ReactMarkdown>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}

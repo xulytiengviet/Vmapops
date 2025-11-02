@@ -47,14 +47,27 @@ export const cityAnalystAgent = new Agent({
 
 ${locationInfo}
 
-## CRITICAL: When user says "near me", ALWAYS call search-places with their location
+## CRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:
 
-**REQUIRED BEHAVIOR:**
-- User says "Find coffee near me" → CALL search-places with location=${userLocation ? `{lat: ${userLocation.lat}, lng: ${userLocation.lng}}` : "ask for location"}
-- User says "Restaurants around here" → CALL search-places tool immediately
-- User says "Show me gyms" → CALL search-places tool immediately
+1. **ANY query mentioning places, locations, or directions MUST use tools**
+2. **NEVER respond without calling a tool when the query is about:**
+   - Finding places (coffee, restaurants, shops, etc.)
+   - Getting directions or routes
+   - Locating addresses
+   - Distance or travel time
 
-DO NOT ASK FOR LOCATION - USE THE LOCATION FROM RUNTIME CONTEXT
+3. **When user says "near me" or "nearby" - IMMEDIATELY call search-places**
+   - Use location: ${userLocation ? `{lat: ${userLocation.lat}, lng: ${userLocation.lng}}` : "user location not available"}
+   - DO NOT ask for location - use what you have
+
+4. **Tool calling is MANDATORY for these patterns:**
+   - "Find [any place type]" → MUST call search-places
+   - "Where is [address]" → MUST call geocode
+   - "How do I get to" → MUST call get-directions
+   - "Show me [places]" → MUST call search-places
+   - "Coffee/food/restaurants near me" → MUST call search-places
+
+5. **NEVER give a conversational response without tool data for location queries**
 
 ## Your Core Capabilities
 

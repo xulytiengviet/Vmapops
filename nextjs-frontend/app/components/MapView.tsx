@@ -1,9 +1,10 @@
 'use client';
 
 import { GoogleMap, Marker, Polyline } from '@react-google-maps/api';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Place, Location } from '@/lib/types';
 import { useMapState } from '@/app/hooks/useMapState';
+import { decodePolyline } from '@/lib/utils/polyline-decoder';
 
 interface MapViewProps {
     center: Location;
@@ -25,6 +26,18 @@ export function MapView({
     const mapRef = useRef<google.maps.Map | null>(null);
     const [routePolyline] = useState<Location[] | null>(null);
     const mapState = useMapState();
+
+    // Log map state changes for debugging
+    useEffect(() => {
+        console.log('[MapView] Map state updated:', {
+            markersCount: mapState.markers.length,
+            routesCount: mapState.routes.length,
+            center: mapState.center,
+            zoom: mapState.zoom,
+            markers: mapState.markers.map(m => ({ id: m.id, title: m.title, position: m.position })),
+            routes: mapState.routes.map(r => ({ id: r.id, color: r.color, weight: r.weight })),
+        });
+    }, [mapState.markers, mapState.routes, mapState.center, mapState.zoom]);
 
     const containerStyle = {
         width: '100%',
@@ -123,8 +136,32 @@ export function MapView({
                 />
             )}
 
-            {/* Routes from map state would go here (requires polyline decoding) */}
-            {/* TODO: Implement polyline decoding for encoded routes */}
+            {/* Routes from map state (agent-driven directions) */}
+            {mapState.routes.map((route) => {
+              try {
+                const decodedPoints = decodePolyline(route.polyline);
+                console.log(`[MapView] Rendering route ${route.id} with ${decodedPoints.length} points`);
+                return (
+                  <Polyline
+                    key={route.id}
+                    path={decodedPoints}
+                    options={{
+                      strokeColor: route.color,
+                      strokeOpacity: route.opacity || 0.9,
+                      strokeWeight: route.weight || 3,
+                      clickable: true,
+                      zIndex: route.metadata?.isPrimary ? 100 : 50,
+                    }}
+                    onClick={() => {
+                      console.log('[MapView] Route clicked:', route.metadata);
+                    }}
+                  />
+                );
+              } catch (error) {
+                console.error(`[MapView] Error decoding polyline for route ${route.id}:`, error);
+                return null;
+              }
+            })}
         </GoogleMap>
     );
 }

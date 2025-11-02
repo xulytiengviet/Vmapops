@@ -21,6 +21,7 @@ export interface MapRoute {
   polyline: string;
   color: string;
   weight?: number;
+  opacity?: number;
   metadata?: any;
 }
 
@@ -96,10 +97,14 @@ export const useMapState = create<MapState>((set) => ({
       switch (cmd.type) {
         case 'SHOW_ON_MAP': {
           const { markers } = cmd.payload;
+          console.log('[MapState] SHOW_ON_MAP received with', markers?.length || 0, 'markers');
           if (Array.isArray(markers)) {
+            console.log('[MapState] Adding markers:', markers.map(m => ({ id: m.id, title: m.title, position: m.position })));
             set((state) => ({
               markers: [...state.markers, ...markers],
             }));
+          } else {
+            console.warn('[MapState] SHOW_ON_MAP payload does not contain markers array');
           }
           break;
         }
@@ -111,16 +116,20 @@ export const useMapState = create<MapState>((set) => ({
         }
 
         case 'DRAW_ROUTE': {
-          const { polyline, color, weight } = cmd.payload;
+          const { polyline, color, weight, opacity, metadata } = cmd.payload;
+          console.log('[MapState] DRAW_ROUTE received:', { color, weight, opacity, isPrimary: metadata?.isPrimary });
           const route: MapRoute = {
-            id: `route-${Date.now()}`,
+            id: `route-${Date.now()}-${Math.random()}`,
             polyline,
             color: color || '#4285F4',
             weight: weight || 3,
+            opacity: opacity || 0.9,
+            metadata,
           };
           set((state) => ({
             routes: [...state.routes, route],
           }));
+          console.log('[MapState] Route added, total routes:', (state: any) => state.routes.length);
           break;
         }
 

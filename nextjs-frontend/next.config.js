@@ -3,7 +3,6 @@ const path = require('path');
 
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
   serverExternalPackages: ["@mastra/*"],
   outputFileTracingRoot: path.join(__dirname),
   env: {
