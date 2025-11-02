@@ -49,6 +49,7 @@ export interface MapState {
   markers: MapMarker[];
   routes: MapRoute[];
   highlights: MapHighlight[];
+  selectedRouteId?: string; // Currently selected/highlighted route
 
   // Imperative requests to the map view (handled by MapView)
   fitBoundsRequest?: { bounds: MapBounds; token: string };
@@ -66,6 +67,7 @@ export interface MapState {
   clearRoutes: () => void;
   addHighlight: (highlight: MapHighlight) => void;
   clearHighlights: () => void;
+  setSelectedRoute: (routeId: string | undefined) => void;
 
   // Execute map commands from tool responses
   executeMapCommands: (commands: any[]) => void;
@@ -78,6 +80,7 @@ export const useMapState = create<MapState>((set) => ({
   markers: [],
   routes: [],
   highlights: [],
+  selectedRouteId: undefined,
 
   // Setters
   setCenter: (center) => set({ center }),
@@ -121,6 +124,7 @@ export const useMapState = create<MapState>((set) => ({
       highlights: [...state.highlights, highlight],
     })),
   clearHighlights: () => set({ highlights: [] }),
+  setSelectedRoute: (routeId) => set({ selectedRouteId: routeId }),
 
   // Execute commands from tool responses
   executeMapCommands: (commands) => {

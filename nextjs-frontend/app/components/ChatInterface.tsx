@@ -64,50 +64,11 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         }
     }, []);
 
-    // Subscribe to separate SSE channel for mapCommands (Fix #2 - most reliable)
-    // Use ref for mapState to avoid recreating EventSource on every state change
+    // Use ref for mapState to avoid recreating handlers on every state change
     const mapStateRef = useRef(mapState);
     useEffect(() => {
         mapStateRef.current = mapState;
     }, [mapState]);
-
-    useEffect(() => {
-        console.log('[ChatInterface] Setting up EventSource for mapCommands');
-        const es = new EventSource('/api/map/stream');
-        let reconnectAttempts = 0;
-        const maxReconnectAttempts = 5;
-        
-        es.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.commands && Array.isArray(data.commands)) {
-                    const commandTypes = data.commands.map((cmd: any) => cmd.type);
-                    console.log(`[ChatInterface] ✅ Received ${data.commands.length} mapCommands from SSE:`, commandTypes.join(', '));
-                    console.log('[ChatInterface] Full commands:', data.commands);
-                    // Use ref to get latest mapState without dependency
-                    mapStateRef.current.executeMapCommands(data.commands);
-                    reconnectAttempts = 0; // Reset on successful message
-                }
-            } catch (error) {
-                console.error('[ChatInterface] Error parsing SSE mapCommands:', error);
-            }
-        };
-        
-        es.onerror = () => {
-            reconnectAttempts++;
-            if (reconnectAttempts >= maxReconnectAttempts) {
-                console.error('[ChatInterface] EventSource error - too many reconnects, closing');
-                es.close();
-            } else {
-                console.warn(`[ChatInterface] EventSource error (attempt ${reconnectAttempts}/${maxReconnectAttempts}), will auto-reconnect`);
-            }
-        };
-        
-        return () => {
-            console.log('[ChatInterface] Closing EventSource');
-            es.close();
-        };
-    }, []); // Empty dependency array - only set up once on mount
 
     // Use the AI SDK's useChat hook with DefaultChatTransport as per Mastra docs
     const { messages, status, error, sendMessage } = useChat({
@@ -142,6 +103,17 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         }),
         onError: (error) => {
             console.error('[ChatInterface] Chat error:', error);
+        },
+        onData: (dataPart) => {
+            // Handle custom data parts from AI SDK stream (AI SDK v5 way)
+            console.log('[ChatInterface] Received data part:', dataPart);
+            if (dataPart.type === 'data-mapCommands' && Array.isArray(dataPart.data)) {
+                const commandTypes = dataPart.data.map((cmd: any) => cmd.type);
+                console.log(`[ChatInterface] ✅ Received ${dataPart.data.length} mapCommands from data part:`, commandTypes.join(', '));
+                console.log('[ChatInterface] Full commands:', dataPart.data);
+                // Use ref to get latest mapState without dependency
+                mapStateRef.current.executeMapCommands(dataPart.data);
+            }
         },
     });
 

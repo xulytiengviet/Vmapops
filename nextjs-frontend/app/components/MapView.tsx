@@ -5,6 +5,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Place, Location } from '@/lib/types';
 import { useMapState } from '@/app/hooks/useMapState';
 import { decodePolyline } from '@/lib/utils/polyline-decoder';
+import { RouteCarousel } from './RouteCarousel';
 
 interface MapViewProps {
     center: Location;
@@ -113,6 +114,7 @@ export function MapView({
     }, [mapState.zoom, mapReady]);
 
     return (
+        <div className="relative w-full h-full">
         <GoogleMap
             mapContainerStyle={containerStyle}
             onLoad={onLoad}
@@ -191,20 +193,29 @@ export function MapView({
             {mapState.routes.map((route) => {
               try {
                 const decodedPoints = decodePolyline(route.polyline);
-                console.log(`[MapView] Rendering route ${route.id} with ${decodedPoints.length} points`);
+                const isSelected = mapState.selectedRouteId === route.id;
+                const baseWeight = route.weight || 3;
+                const selectedWeight = baseWeight + 2; // Make selected route thicker
+                console.log(`[MapView] Rendering route ${route.id} with ${decodedPoints.length} points, selected: ${isSelected}`);
                 return (
                   <Polyline
                     key={route.id}
                     path={decodedPoints}
                     options={{
                       strokeColor: route.color,
-                      strokeOpacity: route.opacity || 0.9,
-                      strokeWeight: route.weight || 3,
+                      strokeOpacity: isSelected ? 1.0 : (route.opacity || 0.9),
+                      strokeWeight: isSelected ? selectedWeight : baseWeight,
                       clickable: true,
-                      zIndex: route.metadata?.isPrimary ? 100 : 50,
+                      zIndex: isSelected ? 150 : (route.metadata?.isPrimary ? 100 : 50),
                     }}
                     onClick={() => {
                       console.log('[MapView] Route clicked:', route.metadata);
+                      // Toggle selection when route is clicked on map
+                      if (mapState.selectedRouteId === route.id) {
+                        mapState.setSelectedRoute(undefined);
+                      } else {
+                        mapState.setSelectedRoute(route.id);
+                      }
                     }}
                   />
                 );
@@ -236,5 +247,9 @@ export function MapView({
               />
             ))}
         </GoogleMap>
+        
+        {/* Route Carousel Overlay */}
+        <RouteCarousel />
+    </div>
     );
 }

@@ -1,11 +1,12 @@
 /**
  * AI SDK Chat Route using Mastra's native AI SDK integration
  * Following Mastra documentation for AI SDK support
+ * Using AI SDK v5's createUIMessageStream for proper data streaming
  */
 
 import { mastra } from "@/mastra";
 import { RuntimeContext } from "@mastra/core/runtime-context";
-import { publishMapCommands } from "@/lib/server/map-stream";
+import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 
 export const maxDuration = 60;
 
@@ -67,55 +68,71 @@ export async function POST(req: Request) {
             console.log("✅ [AI SDK Route] Map bounds SET in RuntimeContext:", context.mapBounds);
         }
 
-        // Stream the agent response in AI SDK format
-        // Use separate SSE channel (Fix #2) for reliable mapCommands delivery
-        const stream = await agent.stream(messages, {
-            runtimeContext,
-            format: "aisdk",  // Use Mastra's built-in AI SDK format
-            maxSteps: 10,     // Allow up to 10 tool calls
-            onStepFinish: (step: any) => {
-                console.log("[AI SDK Route] Step finished:", step);
+        // Use AI SDK v5's createUIMessageStream to properly inject data parts
+        const uiStream = createUIMessageStream({
+            async execute({ writer }) {
+                // Get Mastra's agent stream
+                const mastraStream = await agent.stream(messages, {
+                    runtimeContext,
+                    format: "aisdk",  // Use Mastra's built-in AI SDK format
+                    maxSteps: 10,     // Allow up to 10 tool calls
+                    onStepFinish: (step: any) => {
+                        console.log("[AI SDK Route] Step finished:", step);
 
-                // Extract mapCommands from step.content (where tool results actually are)
-                const content = step.content || [];
-                
-                for (const item of content) {
-                    if (item.type === 'tool-result') {
-                        const toolName = item.toolName || 'unknown';
-                        // Mastra wraps outputs in { type: '...', value: {...} } format
-                        const output = item.output || item.result || {};
-                        const actualOutput = output.value || output; // Handle wrapped format
+                        // Extract mapCommands from step.content (where tool results actually are)
+                        const content = step.content || [];
                         
-                        console.log(`[AI SDK Route] Checking tool-result from ${toolName}:`, {
-                            hasOutput: !!output,
-                            outputKeys: output ? Object.keys(output) : [],
-                            hasValue: !!output.value,
-                            valueKeys: output.value ? Object.keys(output.value) : [],
-                            hasData: !!actualOutput?.data,
-                            dataKeys: actualOutput?.data ? Object.keys(actualOutput.data) : [],
-                            hasMapCommands: !!actualOutput?.data?.mapCommands,
-                        });
-                        
-                        if (actualOutput?.data?.mapCommands) {
-                            const commandTypes = actualOutput.data.mapCommands.map((cmd: any) => cmd.type);
-                            console.log(`[AI SDK Route] ✅ Found ${actualOutput.data.mapCommands.length} mapCommands from ${toolName}:`, commandTypes);
-                            console.log(`[AI SDK Route] Full commands:`, JSON.stringify(actualOutput.data.mapCommands, null, 2));
-                            
-                            // Publish to separate SSE channel for reliable delivery
-                            console.log(`[AI SDK Route] Publishing to SSE channel:`, commandTypes.join(', '));
-                            publishMapCommands(actualOutput.data.mapCommands);
-                        } else {
-                            // Log full structure for debugging
-                            console.log(`[AI SDK Route] ❌ No mapCommands found in ${toolName} output structure:`,
-                                JSON.stringify(output, null, 2));
+                        for (const item of content) {
+                            if (item.type === 'tool-result') {
+                                const toolName = item.toolName || 'unknown';
+                                // Mastra wraps outputs in { type: '...', value: {...} } format
+                                const output = item.output || item.result || {};
+                                const actualOutput = output.value || output; // Handle wrapped format
+                                
+                                console.log(`[AI SDK Route] Checking tool-result from ${toolName}:`, {
+                                    hasOutput: !!output,
+                                    outputKeys: output ? Object.keys(output) : [],
+                                    hasValue: !!output.value,
+                                    valueKeys: output.value ? Object.keys(output.value) : [],
+                                    hasData: !!actualOutput?.data,
+                                    dataKeys: actualOutput?.data ? Object.keys(actualOutput.data) : [],
+                                    hasMapCommands: !!actualOutput?.data?.mapCommands,
+                                });
+                                
+                                if (actualOutput?.data?.mapCommands) {
+                                    const commandTypes = actualOutput.data.mapCommands.map((cmd: any) => cmd.type);
+                                    console.log(`[AI SDK Route] ✅ Found ${actualOutput.data.mapCommands.length} mapCommands from ${toolName}:`, commandTypes);
+                                    console.log(`[AI SDK Route] Full commands:`, JSON.stringify(actualOutput.data.mapCommands, null, 2));
+                                    
+                                    // Write mapCommands as data part using AI SDK v5 way
+                                    writer.write({
+                                        type: 'data-mapCommands',
+                                        data: actualOutput.data.mapCommands,
+                                    });
+                                    console.log(`[AI SDK Route] ✅ Wrote mapCommands as data part:`, commandTypes.join(', '));
+                                } else {
+                                    // Log full structure for debugging
+                                    console.log(`[AI SDK Route] ❌ No mapCommands found in ${toolName} output structure:`,
+                                        JSON.stringify(output, null, 2));
+                                }
+                            }
                         }
                     }
-                }
-            }
+                });
+
+                // Merge Mastra's stream into our UI stream
+                writer.merge(mastraStream.toUIMessageStream());
+            },
+            onError: (error) => {
+                console.error("[AI SDK Route] Stream error:", error);
+                return error instanceof Error ? error.message : "Unknown error";
+            },
         });
 
-        // Return the original stream - mapCommands are delivered via separate SSE channel
-        return stream.toUIMessageStreamResponse();
+        // Return the UI stream response
+        return createUIMessageStreamResponse({
+            stream: uiStream,
+        });
 
     } catch (error) {
         console.error("[AI SDK Route] Error:", error);
