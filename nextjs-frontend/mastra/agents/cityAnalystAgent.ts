@@ -8,7 +8,6 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { Agent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
-import { OpenAIRealtimeVoice } from "@mastra/voice-openai-realtime";
 import {
     searchPlaces,
     searchAlongRoute,
@@ -20,7 +19,16 @@ import {
     mapObserve,
     navigateToPlace,
     tripPlan,
+    // Restaurant interaction tools
+    getRestaurantMenu,
+    getPopularDishes,
+    checkBookingOptions,
+    generateBookingLink,
+    prepareCallScript,
 } from "../tools";
+
+// Import MCP tools loader
+import { getMCPTools } from "../mcp/config";
 
 // Define runtime context type
 export type CityAnalystRuntimeContext = {
@@ -36,15 +44,23 @@ const openrouter = createOpenRouter({
     apiKey: process.env.OPENROUTER_API_KEY,
 });
 
-export const cityAnalystAgent = new Agent({
-    name: "cityAnalystAgent",
-    description:
-        "A city analyst AI assistant that helps users find places, analyze neighborhoods, and explore cities through natural language conversation.",
+/**
+ * Create the City Analyst Agent with MCP tools
+ * This is async because we need to load MCP tools from remote servers
+ */
+export const createCityAnalystAgent = async () => {
+    // Load MCP tools from Tavily and Exa
+    const mcpTools = await getMCPTools();
 
-    // Note: Voice is initialized separately in server.js due to function-based instructions
-    // Voice integration requires static instructions, but we need dynamic RuntimeContext access
+    return new Agent({
+        name: "cityAnalystAgent",
+        description:
+            "A city analyst AI assistant that helps users find places, analyze neighborhoods, and explore cities through natural language conversation.",
 
-    instructions: async ({
+        // Note: Voice is initialized separately in server.js due to function-based instructions
+        // Voice integration requires static instructions, but we need dynamic RuntimeContext access
+
+        instructions: async ({
         runtimeContext,
     }: {
         runtimeContext?: RuntimeContext<CityAnalystRuntimeContext>;
@@ -97,7 +113,7 @@ ${locationInfo}
 
 ## Your Core Capabilities
 
-You have 9 tools available for spatial intelligence:
+You have 13 tools available for spatial intelligence (9 Google Maps + 4 MCP-powered):
 
 1. **search-places**: Find places by text search or nearby location
    - Use for: "Find coffee shops", "What restaurants are near me?", "Show me museums", "Find libraries nearby", "Where are the parks?"
@@ -169,6 +185,54 @@ You have 9 tools available for spatial intelligence:
    - **Supports saved places**: startLocation can be "home", "work", or favorite names. Categories can also use saved place names.
    - For multi-modal trips, each leg is color-coded: green=walk, blue=transit, red=drive, orange=bike
 
+## Enhanced MCP-Powered Search Tools (6 tools available)
+
+10. **tavily_tavily_search**: Real-time web search
+   - Use for: "What's the latest news about [restaurant]?", "Recent events in [area]", "What's happening tonight?"
+   - Provides: Current web information, news articles, blog posts, recent reviews
+   - **WHEN TO USE**: Need real-time information, current events, or recent news not in Google Maps
+
+11. **tavily_tavily_extract**: Extract structured data from URLs
+   - Use for: Getting specific information from restaurant websites, event pages, menus online
+   - Provides: Cleaned, structured data extraction from any web URL
+   - Example: Extract hours/menu from a restaurant's website URL
+
+12. **tavily_tavily_crawl**: Systematic website crawling
+   - Use for: Deep exploration of business websites, comprehensive data gathering
+   - Provides: Full website content discovery and indexing
+
+13. **tavily_tavily_map**: Create structured website maps
+   - Use for: Understanding website structure, finding all resources
+   - Provides: Hierarchical map of website pages
+
+14. **exa_web_search_exa**: Neural semantic web search
+   - Use for: "Cozy date spots", "Hidden gems", "Places locals love", vibe-based queries
+   - Handles: Vague, emotional, or nuanced queries with semantic understanding
+   - **WHEN TO USE**: User describes atmosphere/vibe/feeling rather than specific place type
+   - Returns: Semantically relevant web content and place recommendations
+
+15. **exa_get_code_context_exa**: Technical/code content search
+   - Use for: Developer resources, technical documentation (less relevant for city search)
+   - Available but not primary use case for this agent
+
+## Tool Selection Strategy
+
+**Choose Google Maps tools when:**
+- User wants specific place types ("coffee shops", "Italian restaurants")
+- Need accurate location, routing, or distance information
+- Searching by standard filters (rating, price, open now)
+
+**Choose MCP tools when:**
+- User asks about current events or news ("what's happening", "any events")
+- Query is semantic/emotional ("cozy", "romantic", "hidden gems")
+- Need similar places to a known example
+- Want recent information not in Google's database
+
+**Combine tools for best results:**
+- Use tavily-news for events → search-places for nearby restaurants
+- Use exa-semantic for discovery → get-place-details for specifics
+- Use search-places for locations → tavily-search for recent news
+
 ## Guidelines
 
 1. **Call tools immediately** - Don't ask for more info, use what you have
@@ -191,17 +255,42 @@ You have 9 tools available for spatial intelligence:
     // Using OpenRouter for model access
     model: openrouter("anthropic/claude-haiku-4.5"),
 
-    // Register tools
-    tools: {
-        "search-places": searchPlaces,
-        "search-along-route": searchAlongRoute,
-        geocode: geocode,
-        "get-directions": getDirections,
-        "get-place-details": getPlaceDetails,
-        "calculate-distance-matrix": calculateDistanceMatrix,
-        "map-control": mapControl,
-        "map-observe": mapObserve,
-        "navigate-to-place": navigateToPlace,
-        "trip-plan": tripPlan,
-    },
-});
+        // Register tools
+        tools: {
+            // Google Maps tools
+            "search-places": searchPlaces,
+            "search-along-route": searchAlongRoute,
+            geocode: geocode,
+            "get-directions": getDirections,
+            "get-place-details": getPlaceDetails,
+            "calculate-distance-matrix": calculateDistanceMatrix,
+            "map-control": mapControl,
+            "map-observe": mapObserve,
+            "navigate-to-place": navigateToPlace,
+            "trip-plan": tripPlan,
+            // Restaurant interaction tools
+            "get-restaurant-menu": getRestaurantMenu,
+            "get-popular-dishes": getPopularDishes,
+            "check-booking-options": checkBookingOptions,
+            "generate-booking-link": generateBookingLink,
+            "prepare-call-script": prepareCallScript,
+            // MCP-powered enhanced search tools (auto-loaded from Tavily and Exa)
+            ...mcpTools,
+        },
+    });
+};
+
+// Export a singleton instance (initialized lazily)
+let agentInstance: Agent | null = null;
+
+export const getCityAnalystAgent = async (): Promise<Agent> => {
+    if (!agentInstance) {
+        agentInstance = await createCityAnalystAgent();
+    }
+    return agentInstance;
+};
+
+// For backward compatibility - returns a Promise that resolves to the agent
+// Mastra should handle Promise values in the agents config
+// For direct usage, use getCityAnalystAgent() instead
+export const cityAnalystAgent = getCityAnalystAgent();

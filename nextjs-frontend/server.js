@@ -31,15 +31,16 @@ async function loadMastra() {
   try {
     console.log('[Custom Server] Loading Mastra modules...');
     
+    // Note: cityAnalystAgent is not actually used in this server
+    // (we create a separate OpenAIRealtimeVoice instance)
+    // But we load it for potential future use
     const agentModule = await import('./mastra/agents/cityAnalystAgent.ts');
-    cityAnalystAgent = agentModule.cityAnalystAgent || agentModule.default?.cityAnalystAgent || agentModule.default;
-    
-    if (!cityAnalystAgent) {
-      console.error('[Custom Server] Agent not found in module');
-      throw new Error('Failed to load cityAnalystAgent from module');
+    if (agentModule.getCityAnalystAgent) {
+      cityAnalystAgent = await agentModule.getCityAnalystAgent();
+      console.log('✅ [Custom Server] cityAnalystAgent loaded');
+    } else {
+      console.log('⚠️ [Custom Server] cityAnalystAgent not available (not needed for voice server)');
     }
-    
-    console.log('✅ [Custom Server] cityAnalystAgent loaded');
     
     // Import tools from the tools module
     const toolsModule = await import('./mastra/tools/index.ts');
@@ -189,14 +190,29 @@ app.prepare().then(async () => {
         // Create separate voice instance (not attached to agent due to function-based instructions)
         voiceInstance = new OpenAIRealtimeVoice({
           speaker: 'alloy',
-          model: 'gpt-4o-realtime-preview-2024-12-17',
+          model: 'gpt-realtime-mini-2025-10-06',
         });
 
         console.log('✅ [Voice Server] Voice instance created');
 
-        // Add tools to voice instance (from cityAnalystAgent)
-        voiceInstance.addTools(agentTools);
-        console.log('✅ [Voice Server] Tools added to voice instance');
+        // Add tools to voice instance with runtime context binding
+        const toolsWithContext = {};
+        for (const [toolName, tool] of Object.entries(agentTools)) {
+          // Wrap each tool to inject runtime context
+          toolsWithContext[toolName] = {
+            ...tool,
+            execute: async (params) => {
+              // Call original execute with runtime context
+              return tool.execute({
+                ...params,
+                runtimeContext,
+              });
+            },
+          };
+        }
+        
+        voiceInstance.addTools(toolsWithContext);
+        console.log('✅ [Voice Server] Tools added to voice instance with runtime context');
 
         // Connect to OpenAI Realtime API
         await voiceInstance.connect();
@@ -238,11 +254,23 @@ ${userLocationText}
         });
         console.log('✅ [Voice Server] Session configured with instructions and VAD');
 
-        // Listen to voice events
-        voiceInstance.on('speaker', ({ audio }) => {
-          // Forward audio to client
-          socket.emit('audio', Array.from(audio));
-          socket.emit('status', 'speaking');
+        // Listen to voice events - use 'speaking' not 'speaker'
+        voiceInstance.on('speaking', ({ audio }) => {
+          // Forward audio to client - prefer binary buffers to avoid JSON overhead
+          if (audio) {
+            console.log('[Voice Server] Received audio chunk, length:', audio.length);
+            try {
+              // Emit as ArrayBuffer when possible for efficient transport
+              const buf = audio.buffer ? audio.buffer : Buffer.from(audio);
+              socket.emit('audio', buf);
+            } catch (e) {
+              // Fallback to number array if something goes wrong
+              socket.emit('audio', Array.from(audio));
+            }
+            socket.emit('status', 'speaking');
+          } else {
+            console.warn('[Voice Server] Speaking event received with no audio');
+          }
         });
 
         voiceInstance.on('writing', ({ text, role }) => {
@@ -261,13 +289,37 @@ ${userLocationText}
           socket.emit('error', { message: error.message || 'Voice error occurred' });
         });
 
+        // Listen for tool invocations
+        voiceInstance.on('openAIRealtime:function_call_arguments.done', (event) => {
+          console.log('[Voice Server] Tool being called:', event.name);
+          console.log('[Voice Server] Tool arguments:', event.arguments);
+        });
+        
+        voiceInstance.on('openAIRealtime:response.function_call_arguments.done', (event) => {
+          console.log('[Voice Server] Tool response received for:', event.name);
+        });
+
         // OpenAI Realtime events
         voiceInstance.on('openAIRealtime:conversation.interrupted', () => {
+          console.log('[Voice Server] Conversation interrupted');
           socket.emit('status', 'interrupted');
         });
 
         voiceInstance.on('openAIRealtime:conversation.item.completed', () => {
+          console.log('[Voice Server] Conversation item completed');
           socket.emit('status', 'completed');
+        });
+        
+        voiceInstance.on('openAIRealtime:response.audio_transcript.delta', (event) => {
+          console.log('[Voice Server] Audio transcript delta:', event.delta);
+        });
+        
+        voiceInstance.on('openAIRealtime:input_audio_buffer.speech_started', () => {
+          console.log('[Voice Server] Speech started');
+        });
+        
+        voiceInstance.on('openAIRealtime:input_audio_buffer.speech_stopped', () => {
+          console.log('[Voice Server] Speech stopped');
         });
 
         socket.emit('ready', { message: 'Voice connection established' });
@@ -278,6 +330,10 @@ ${userLocationText}
       }
     });
 
+    // Initialize audio stream for this connection
+    let audioStream = null;
+    let audioStreamController = null;
+    
     // Receive audio from client
     socket.on('audio', async (audioData) => {
       if (!voiceConnected || !voiceInstance) {
@@ -286,27 +342,46 @@ ${userLocationText}
       }
 
       try {
+        // First chunk - create a continuous stream
+        if (!audioStream) {
+          console.log('[Voice Server] Creating audio stream for continuous sending');
+          
+          // Create a PassThrough stream that we can write to continuously
+          const { PassThrough } = require('stream');
+          audioStream = new PassThrough();
+          
+          // Send the stream to OpenAI (only once)
+          voiceInstance.send(audioStream).catch(error => {
+            console.error('[Voice Server] Error sending stream to OpenAI:', error);
+          });
+          
+          console.log('[Voice Server] Audio stream connected to OpenAI');
+        }
+        
         // Convert array back to Int16Array
         const int16Data = new Int16Array(audioData);
         
-        // Add to buffer
-        audioBuffer.push(int16Data);
+        // Convert to Buffer for OpenAI
+        const buffer = Buffer.from(int16Data.buffer);
         
-        // Send buffered audio to Mastra voice
-        // Create a readable stream from the audio buffer
-        const audioStream = Readable.from((async function* () {
-          for (const chunk of audioBuffer) {
-            yield Buffer.from(chunk.buffer);
-          }
-          audioBuffer = []; // Clear buffer after sending
-        })());
-        
-        // Send to OpenAI Realtime API
-        await voiceInstance.send(audioStream);
+        // Write chunk to the continuous stream
+        if (audioStream && !audioStream.destroyed) {
+          audioStream.write(buffer);
+          console.log('[Voice Server] Audio chunk written to stream, size:', buffer.length);
+        }
         
       } catch (error) {
         console.error('[Voice Server] Audio processing error:', error);
         socket.emit('error', { message: error.message || 'Failed to process audio' });
+      }
+    });
+    
+    // Handle stopping audio stream
+    socket.on('stop-audio', () => {
+      if (audioStream && !audioStream.destroyed) {
+        console.log('[Voice Server] Ending audio stream');
+        audioStream.end();
+        audioStream = null;
       }
     });
 

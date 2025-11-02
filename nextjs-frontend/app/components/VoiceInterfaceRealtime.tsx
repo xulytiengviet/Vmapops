@@ -7,6 +7,10 @@ import { useUserProfile } from '@/app/hooks/useUserProfile';
 import { io, Socket } from 'socket.io-client';
 
 export function VoiceInterfaceRealtime() {
+    // Playback configuration
+    const PLAYBACK_SAMPLE_RATE = 24000; // OpenAI realtime audio
+    const INITIAL_JITTER_BUFFER_MS = 180; // startup buffer to smooth scheduling
+    const MIN_HEADROOM_MS = 30; // when catching up, keep at least this headroom
     const mapState = useMapState();
     const userProfile = useUserProfile();
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -20,8 +24,10 @@ export function VoiceInterfaceRealtime() {
     
     const socketRef = useRef<Socket | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
+    const playbackContextRef = useRef<AudioContext | null>(null);
+    const nextPlayTimeRef = useRef<number>(0);
     const mediaStreamRef = useRef<MediaStream | null>(null);
-    const processorRef = useRef<ScriptProcessorNode | null>(null);
+    const workletNodeRef = useRef<AudioWorkletNode | null>(null);
 
     // Get user location
     useEffect(() => {
@@ -102,9 +108,16 @@ export function VoiceInterfaceRealtime() {
             setStatus(newStatus);
         });
 
-        socket.on('audio', (audioData: Int16Array) => {
-            // Play received audio
-            playAudioChunk(audioData);
+        socket.on('audio', (audioData: ArrayBuffer | number[]) => {
+            // Handle both binary ArrayBuffer and JSON number[] payloads
+            let int16Data: Int16Array;
+            if (audioData instanceof ArrayBuffer) {
+                int16Data = new Int16Array(audioData);
+            } else {
+                int16Data = new Int16Array(audioData);
+            }
+            console.log('[VoiceInterfaceRealtime] Received audio chunk, length:', int16Data.length);
+            playAudioChunk(int16Data);
         });
 
         socket.on('mapCommands', (commands: any[]) => {
@@ -163,26 +176,56 @@ export function VoiceInterfaceRealtime() {
             audioContextRef.current = audioContext;
 
             const source = audioContext.createMediaStreamSource(stream);
-            const processor = audioContext.createScriptProcessor(4096, 1, 1);
-            processorRef.current = processor;
+            // Dynamically register a lightweight AudioWorklet to convert Float32 → Int16
+            const workletCode = `
+class MicProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const input = inputs[0];
+    if (input && input[0]) {
+      const ch = input[0];
+      const len = ch.length;
+      const int16 = new Int16Array(len);
+      for (let i = 0; i < len; i++) {
+        const s = Math.max(-1, Math.min(1, ch[i]));
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      this.port.postMessage(int16, [int16.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('mic-processor', MicProcessor);
+`;
+            const blobUrl = URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' }));
+            await audioContext.audioWorklet.addModule(blobUrl);
 
-            processor.onaudioprocess = (e) => {
+            const micNode = new AudioWorkletNode(audioContext, 'mic-processor', {
+                numberOfInputs: 1,
+                numberOfOutputs: 1,
+                channelCount: 1,
+            });
+            workletNodeRef.current = micNode;
+
+            // Pipe chunks from the worklet to the server
+            micNode.port.onmessage = (event) => {
                 if (!socketRef.current?.connected) return;
-
-                const inputData = e.inputBuffer.getChannelData(0);
-                // Convert Float32Array to Int16Array (PCM format)
-                const int16Data = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) {
-                    const s = Math.max(-1, Math.min(1, inputData[i]));
-                    int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                const data = event.data as ArrayBuffer | Int16Array;
+                const int16Data = data instanceof ArrayBuffer ? new Int16Array(data) : (data as Int16Array);
+                const audioArray = Array.from(int16Data);
+                if (!(window as any).audioChunkCount) (window as any).audioChunkCount = 0;
+                if ((window as any).audioChunkCount++ < 1) {
+                    console.log('[VoiceInterfaceRealtime] Sending audio chunks...');
                 }
-
-                // Send audio to server
-                socketRef.current.emit('audio', int16Data);
+                socketRef.current.emit('audio', audioArray);
             };
 
-            source.connect(processor);
-            processor.connect(audioContext.destination);
+            // Create a silent gain node to keep graph alive but avoid loopback
+            const silentGain = audioContext.createGain();
+            silentGain.gain.value = 0;
+
+            source.connect(micNode);
+            micNode.connect(silentGain);
+            silentGain.connect(audioContext.destination);
 
             console.log('[VoiceInterfaceRealtime] Microphone started, streaming audio');
         } catch (error) {
@@ -196,9 +239,15 @@ export function VoiceInterfaceRealtime() {
     const stopListening = () => {
         console.log('[VoiceInterfaceRealtime] Stopping microphone...');
         
-        if (processorRef.current) {
-            processorRef.current.disconnect();
-            processorRef.current = null;
+        // Tell server to end the audio stream
+        if (socketRef.current?.connected) {
+            socketRef.current.emit('stop-audio');
+        }
+        
+        if (workletNodeRef.current) {
+            workletNodeRef.current.disconnect();
+            workletNodeRef.current.port.onmessage = null as unknown as (this: MessagePort, ev: MessageEvent) => any;
+            workletNodeRef.current = null;
         }
 
         if (audioContextRef.current) {
@@ -215,27 +264,72 @@ export function VoiceInterfaceRealtime() {
         if (isConnected) {
             setStatus('Ready - Click to start');
         }
+        
+        // Reset audio chunk counter
+        (window as any).audioChunkCount = 0;
+        
+        // Reset playback queue
+        nextPlayTimeRef.current = 0;
     };
 
-    // Play audio chunk
-    const playAudioChunk = (audioData: Int16Array) => {
-        if (!audioContextRef.current) {
-            audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+    // Play audio chunk with proper queuing and timing
+    const playAudioChunk = async (audioData: Int16Array) => {
+        try {
+            // Create separate AudioContext for playback (24kHz for OpenAI audio)
+            if (!playbackContextRef.current) {
+                playbackContextRef.current = new AudioContext({ sampleRate: PLAYBACK_SAMPLE_RATE });
+                nextPlayTimeRef.current = 0;
+            }
+
+            const audioContext = playbackContextRef.current;
+            
+            // Resume audio context if suspended (required by browsers)
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+                console.log('[VoiceInterfaceRealtime] Playback context resumed');
+            }
+
+            // Create audio buffer
+            const audioBuffer = audioContext.createBuffer(1, audioData.length, PLAYBACK_SAMPLE_RATE);
+            const channelData = audioBuffer.getChannelData(0);
+
+            // Convert Int16Array to Float32Array
+            for (let i = 0; i < audioData.length; i++) {
+                channelData[i] = audioData[i] / (audioData[i] < 0 ? 0x8000 : 0x7fff);
+            }
+
+            // Calculate when to schedule this chunk
+            const currentTime = audioContext.currentTime;
+            const duration = audioData.length / PLAYBACK_SAMPLE_RATE;
+            
+            // Initialize nextPlayTime if this is the first chunk
+            if (nextPlayTimeRef.current === 0) {
+                // Start with jitter buffer to absorb network variability
+                nextPlayTimeRef.current = currentTime + INITIAL_JITTER_BUFFER_MS / 1000;
+            }
+            
+            // If nextPlayTime is in the past, schedule slightly ahead of current time
+            if (nextPlayTimeRef.current < currentTime) {
+                // Add minimal headroom to prevent overlap/glitches when catching up
+                nextPlayTimeRef.current = currentTime + MIN_HEADROOM_MS / 1000;
+            }
+
+            // Create and schedule the audio source
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            
+            // Schedule to play at the queued time
+            const scheduleTime = nextPlayTimeRef.current;
+            source.start(scheduleTime);
+            
+            // Update next play time for the next chunk
+            nextPlayTimeRef.current = scheduleTime + duration;
+            
+            console.log('[VoiceInterfaceRealtime] Scheduled chunk at', scheduleTime.toFixed(3), 's, duration:', duration.toFixed(3), 's');
+        } catch (error) {
+            console.error('[VoiceInterfaceRealtime] Error playing audio:', error);
         }
-
-        const audioContext = audioContextRef.current;
-        const audioBuffer = audioContext.createBuffer(1, audioData.length, 24000);
-        const channelData = audioBuffer.getChannelData(0);
-
-        // Convert Int16Array to Float32Array
-        for (let i = 0; i < audioData.length; i++) {
-            channelData[i] = audioData[i] / (audioData[i] < 0 ? 0x8000 : 0x7fff);
-        }
-
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-        source.start();
     };
 
     // Toggle listening
