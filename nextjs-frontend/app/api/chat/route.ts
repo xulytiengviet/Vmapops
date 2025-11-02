@@ -1,7 +1,6 @@
 /**
- * Chat API Route
- * Connects chat with Mastra Agent
- * Uses RuntimeContext to pass user location to agent and tools
+ * AI SDK Chat Route using Mastra's native AI SDK integration
+ * Following Mastra documentation for AI SDK support
  */
 
 import { mastra } from "@/mastra";
@@ -20,9 +19,12 @@ export async function POST(req: Request) {
         const body = await req.json();
         const { messages, context } = body;
 
+        // Debug: Log what we received
+        console.log("[AI SDK Route] Received request with context:", JSON.stringify(context, null, 2));
+        console.log("[AI SDK Route] Number of messages:", messages?.length);
+
         // Validate messages
         if (!messages || !Array.isArray(messages)) {
-            console.error("Invalid messages format:", { body, messages });
             return Response.json(
                 { error: "Messages array is required" },
                 { status: 400 }
@@ -38,91 +40,54 @@ export async function POST(req: Request) {
             );
         }
 
-        // Map messages to the format expected by Mastra
-        const formattedMessages = messages.map((m: any) => ({
-            role: m.role,
-            content: m.content,
-        }));
-
         // Create RuntimeContext with user location and map state
         const runtimeContext = new RuntimeContext<ChatRuntimeContext>();
+        
         if (context?.userLocation) {
             runtimeContext.set("userLocation", context.userLocation);
-            console.log("[Chat API] User location from frontend:", context.userLocation);
+            console.log("✅ [AI SDK Route] User location SET in RuntimeContext:", context.userLocation);
+        } else {
+            console.warn("⚠️ [AI SDK Route] No userLocation in context - tools will not have location fallback!");
         }
+        
         if (context?.mapCenter) {
             runtimeContext.set("mapCenter", context.mapCenter);
+            console.log("✅ [AI SDK Route] Map center SET in RuntimeContext:", context.mapCenter);
         }
+        
         if (context?.mapZoom) {
             runtimeContext.set("mapZoom", context.mapZoom);
+            console.log("✅ [AI SDK Route] Map zoom SET in RuntimeContext:", context.mapZoom);
         }
 
-        // Generate response from agent with tool support and runtime context
-        console.log("[Chat API] Calling agent.generate with messages:", formattedMessages[formattedMessages.length - 1]);
-        const result = await agent.generate(formattedMessages, {
-            maxSteps: 10, // Allow up to 10 tool calls per request
+        // Stream the agent response in AI SDK format
+        const stream = await agent.stream(messages, {
             runtimeContext,
-        });
+            format: "aisdk",  // Use Mastra's built-in AI SDK format
+            maxSteps: 10,     // Allow up to 10 tool calls
+            onStepFinish: (step: any) => {
+                console.log("[AI SDK Route] Step finished:", step);
 
-        // Debug: Log the full result structure
-        console.log("[Chat API] Agent result type:", typeof result);
-        console.log("[Chat API] Agent result keys:", result ? Object.keys(result) : "null");
-        if (result && typeof result === "object") {
-            console.log("[Chat API] Has toolResults?", "toolResults" in result);
-            console.log("[Chat API] Has text?", "text" in result);
-            if ("toolResults" in result) {
-                console.log("[Chat API] Tool results count:", (result as any).toolResults?.length);
-                console.log("[Chat API] Tool results:", JSON.stringify((result as any).toolResults, null, 2));
-            }
-        }
-
-        // Extract text and map commands from result
-        let responseText = "";
-        let mapCommands: any[] = [];
-
-        if (typeof result === "string") {
-            responseText = result;
-        } else if (result && typeof result === "object") {
-            // Check various possible text fields
-            if ("text" in result) {
-                responseText = (result as any).text;
-            } else if ("content" in result) {
-                responseText = (result as any).content;
-            } else if ("message" in result) {
-                responseText = (result as any).message;
-            } else {
-                responseText = "I received your message.";
-            }
-
-            // Extract map commands from tool results
-            // mapCommands are nested in toolResults[].result.data.mapCommands
-            if ("toolResults" in result && Array.isArray((result as any).toolResults)) {
-                const toolResults = (result as any).toolResults;
-                for (const toolResult of toolResults) {
-                    if (toolResult.result?.data?.mapCommands && Array.isArray(toolResult.result.data.mapCommands)) {
-                        mapCommands.push(...toolResult.result.data.mapCommands);
-                        console.log(`[Chat API] Extracted ${toolResult.result.data.mapCommands.length} mapCommands from tool: ${toolResult.toolName}`);
+                // Log mapCommands if present in tool results
+                if (step?.toolResults) {
+                    for (const toolResult of step.toolResults) {
+                        if (toolResult?.result?.data?.mapCommands) {
+                            console.log(`[AI SDK Route] mapCommands from ${toolResult.toolName}:`,
+                                toolResult.result.data.mapCommands);
+                        }
                     }
                 }
             }
-        } else {
-            responseText = "I received your message.";
-        }
-
-        return Response.json({
-            content: responseText,
-            role: "assistant",
-            mapCommands: mapCommands,
         });
+
+        // Return the stream as UI Message Stream Response
+        // Mastra handles the conversion to AI SDK format internally
+        return stream.toUIMessageStreamResponse();
+
     } catch (error) {
-        console.error("Chat API error:", error);
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.error("[AI SDK Route] Error:", error);
         return Response.json(
-            {
-                content: `Error: ${errorMessage}`,
-                role: "assistant",
-                mapCommands: [],
-            },
+            { error: error instanceof Error ? error.message : "Unknown error" },
             { status: 500 }
         );
     }

@@ -109,12 +109,12 @@ export class PlacesService {
       url.searchParams.set("radius", String(options.radius || 1000));
       url.searchParams.set("key", this.apiKey);
 
-      // Type can be singular or plural (cafe or cafes)
+      // Use 'keyword' instead of 'type' for more intelligent search
+      // Google's keyword parameter understands natural language better
+      // It can handle "coffee", "coffee shops", "cafes", etc. without strict type matching
       if (options.type) {
-        const typeParam = options.type.endsWith("s")
-          ? options.type
-          : options.type + "s";
-        url.searchParams.set("type", typeParam);
+        // Use keyword parameter which is more flexible than type
+        url.searchParams.set("keyword", options.type);
       }
 
       const response = await fetch(url.toString());

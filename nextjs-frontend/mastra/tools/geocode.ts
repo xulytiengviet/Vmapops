@@ -7,6 +7,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { GeocodingService } from "@/lib/services/geocoding-service";
+import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 import { generateGeocodeInsights } from "./utils/insight-generator";
 
 const geocodeSchema = z.object({
@@ -91,9 +92,15 @@ export const geocode = createTool({
   inputSchema: geocodeSchema,
   outputSchema: geocodeOutputSchema,
 
-  execute: async ({ context, writer }) => {
+  execute: async ({ context, runtimeContext, writer }) => {
     try {
       const service = new GeocodingService();
+      
+      // Log RuntimeContext for debugging (useful for future enhancements)
+      const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
+      if (userLocation) {
+        console.log("[geocode] User location available in RuntimeContext:", userLocation);
+      }
 
       // Determine mode
       const isForwardGeocode = !!context.address && !context.coordinates;
@@ -107,16 +114,9 @@ export const geocode = createTool({
         };
       }
 
-      // Emit initial status
-      const statusMsg = isForwardGeocode
-        ? `Geocoding "${context.address}"...`
-        : `Finding address at ${context.coordinates?.lat.toFixed(4)}, ${context.coordinates?.lng.toFixed(4)}...`;
-
-      await writer?.write({
-        type: "text",
-        text: statusMsg,
-      });
-
+      // Note: Removed incorrect writer.write() call that was causing AI SDK validation error
+      // The writer should use text-start/text-delta/text-end or custom data parts
+      
       let results: any[] = [];
 
       if (isForwardGeocode) {

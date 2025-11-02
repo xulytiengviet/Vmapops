@@ -7,6 +7,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { RoutesService } from "@/lib/services/routes-service";
 import { generateDistanceMatrixInsights } from "./utils/insight-generator";
+import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
 const calculateDistanceMatrixSchema = z.object({
   origins: z
@@ -69,17 +70,33 @@ export const calculateDistanceMatrix = createTool({
   inputSchema: calculateDistanceMatrixSchema,
   outputSchema: calculateDistanceMatrixOutputSchema,
 
-  execute: async ({ context, writer }) => {
+  execute: async ({ context, runtimeContext, writer }) => {
     try {
       const service = new RoutesService();
 
-      await writer?.write({
-        type: "text",
-        text: `Calculating distance matrix (${context.origins.length} × ${context.destinations.length})...`,
-      });
+      // Try to get user location from RuntimeContext as fallback for origins
+      const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
+      
+      // If origins is empty and userLocation exists, use it as the only origin
+      const origins = context.origins.length > 0 ? context.origins : (userLocation ? [userLocation] : []);
+
+      if (origins.length === 0) {
+        return {
+          success: false,
+          error: "At least one origin is required. Provide origins parameter or ensure user location is available.",
+        };
+      }
+
+      // Log RuntimeContext usage for debugging
+      if (context.origins.length === 0 && userLocation) {
+        console.log("[calculate-distance-matrix] Using origin from RuntimeContext:", userLocation);
+      }
+
+      // Note: Removed incorrect writer.write() call that was causing AI SDK validation error
+      // The writer should use text-start/text-delta/text-end or custom data parts
 
       const matrix = await service.getDistanceMatrix({
-        origins: context.origins,
+        origins: origins,
         destinations: context.destinations,
         travelMode: context.mode,
       });

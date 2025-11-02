@@ -6,6 +6,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { PlacesService } from "@/lib/services/places-service";
+import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
 const getPlaceDetailsSchema = z.object({
   placeId: z.string().describe("Google Place ID"),
@@ -60,14 +61,18 @@ export const getPlaceDetails = createTool({
   inputSchema: getPlaceDetailsSchema,
   outputSchema: getPlaceDetailsOutputSchema,
 
-  execute: async ({ context, writer }) => {
+  execute: async ({ context, runtimeContext, writer }) => {
     try {
       const service = new PlacesService();
+      
+      // Log RuntimeContext for debugging (useful for future enhancements like user preferences)
+      const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
+      if (userLocation) {
+        console.log("[get-place-details] User location available in RuntimeContext:", userLocation);
+      }
 
-      await writer?.write({
-        type: "text",
-        text: "Loading place details...",
-      });
+      // Note: Removed incorrect writer.write() call that was causing AI SDK validation error
+      // The writer should use text-start/text-delta/text-end or custom data parts
 
       const details = await service.getPlaceDetails(context.placeId, context.fields);
 

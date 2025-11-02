@@ -9,6 +9,7 @@ import { z } from "zod";
 import { RoutesService } from "@/lib/services/routes-service";
 import { formatDistance, formatDuration } from "./utils/distance-calculator";
 import { generateDirectionInsights } from "./utils/insight-generator";
+import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
 const getDirectionsSchema = z.object({
   origin: z
@@ -16,7 +17,8 @@ const getDirectionsSchema = z.object({
       lat: z.number(),
       lng: z.number(),
     })
-    .describe("Starting location"),
+    .optional()
+    .describe("Starting location (defaults to user's current location)"),
 
   destination: z
     .object({
@@ -108,20 +110,35 @@ export const getDirections = createTool({
   inputSchema: getDirectionsSchema,
   outputSchema: getDirectionsOutputSchema,
 
-  execute: async ({ context, writer }) => {
+  execute: async ({ context, runtimeContext, writer }) => {
     try {
       const service = new RoutesService();
 
-      // Emit initial status
-      const modeText = context.mode.toLowerCase();
-      await writer?.write({
-        type: "text",
-        text: `Finding ${modeText} directions...`,
-      });
+      // Try to get user location from RuntimeContext as fallback for origin
+      const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
+      
+      // Use tool parameter OR fallback to RuntimeContext for origin
+      const origin = context.origin || userLocation;
 
+      if (!origin) {
+        return {
+          success: false,
+          error: "Origin location is required. Provide origin parameter or ensure user location is available.",
+        };
+      }
+
+      // Log RuntimeContext usage for debugging
+      if (!context.origin && userLocation) {
+        console.log("[get-directions] Using origin from RuntimeContext:", userLocation);
+      }
+
+      // Note: Removed incorrect writer.write() call that was causing AI SDK validation error
+      // The writer should use text-start/text-delta/text-end or custom data parts
+      const modeText = context.mode.toLowerCase();
+      
       // Get directions
       const routes = await service.getDirections({
-        origin: context.origin,
+        origin: origin,
         destination: context.destination,
         travelMode: context.mode,
         departureTime: context.departureTime,
@@ -172,14 +189,11 @@ export const getDirections = createTool({
       // Pan to origin
       mapCommands.push({
         type: "PAN_TO",
-        payload: context.origin,
+        payload: origin,
       });
 
-      // Emit progress
-      await writer?.write({
-        type: "text",
-        text: `Route found: ${formatDistance(primaryRoute.distanceMeters)} in ${formatDuration(primaryRoute.durationSeconds)}`,
-      });
+      // Note: Removed second incorrect writer.write() call
+      // Progress updates should use proper AI SDK streaming format or be omitted
 
       return {
         success: true,

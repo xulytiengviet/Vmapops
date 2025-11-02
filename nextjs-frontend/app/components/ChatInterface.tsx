@@ -1,202 +1,179 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import { Send, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMapState } from '@/app/hooks/useMapState';
-
-interface Message {
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-}
+import type { AgentDataPart, WorkflowDataPart, NetworkDataPart } from '@mastra/ai-sdk';
 
 interface ChatInterfaceProps {
     onPlaceSelect?: (place: any) => void;
 }
 
+// Helper function to extract text content from message parts
+function extractTextContent(message: any): string {
+    if (!message.parts || !Array.isArray(message.parts)) {
+        return '';
+    }
+
+    // Look for text parts in the message
+    const textParts = message.parts
+        .filter((part: any) => part.type === 'text' || part.text)
+        .map((part: any) => part.text || part.content || '')
+        .join('');
+
+    return textParts;
+}
+
 export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState('');
-    const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const mapState = useMapState();
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+    const [inputValue, setInputValue] = useState('');
+    
+    // Use ref to avoid closure issues with userLocation
+    const userLocationRef = useRef<{ lat: number; lng: number } | null>(null);
+    
+    // Keep ref in sync with state
+    useEffect(() => {
+        userLocationRef.current = userLocation;
+        console.log('[ChatInterface] userLocation state changed:', userLocation);
+    }, [userLocation]);
 
     // Get user's geolocation on mount
     useEffect(() => {
         if (navigator.geolocation) {
+            console.log('[ChatInterface] Requesting geolocation...');
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    setUserLocation({
+                    const location = {
                         lat: position.coords.latitude,
                         lng: position.coords.longitude,
-                    });
+                    };
+                    console.log('[ChatInterface] Geolocation acquired:', location);
+                    setUserLocation(location);
                 },
                 (err) => {
-                    console.warn('Geolocation not available:', err);
+                    console.warn('[ChatInterface] Geolocation error:', err);
                 }
             );
+        } else {
+            console.warn('[ChatInterface] Geolocation not supported by browser');
         }
     }, []);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-
-        if (!input.trim() || loading) return;
-
-        // Add user message
-        const userMessage: Message = {
-            id: Date.now().toString(),
-            role: 'user',
-            content: input,
-        };
-
-        setMessages((prev) => [...prev, userMessage]);
-        setInput('');
-        setLoading(true);
-
-        // Create assistant message that will be updated via streaming
-        const assistantMessageId = (Date.now() + 1).toString();
-        const assistantMessage: Message = {
-            id: assistantMessageId,
-            role: 'assistant',
-            content: '',
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-
-        try {
-            // Use streaming endpoint
-            const response = await fetch('/api/chat/stream', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    messages: [
-                        ...messages.map((m) => ({ role: m.role, content: m.content })),
-                        { role: 'user', content: input },
-                    ],
-                    context: {
-                        userLocation: userLocation,
-                        mapCenter: mapState.center,
-                        mapZoom: mapState.zoom,
+    // Use the AI SDK's useChat hook with DefaultChatTransport as per Mastra docs
+    const { messages, status, error, sendMessage } = useChat({
+        transport: new DefaultChatTransport({
+            api: '/api/chat',
+            prepareSendMessagesRequest({ messages }) {
+                // Use ref to get current location value (avoids closure issues)
+                const currentLocation = userLocationRef.current;
+                
+                const context = {
+                    userLocation: currentLocation,
+                    mapCenter: mapState.center,
+                    mapZoom: mapState.zoom,
+                };
+                
+                // Debug log to see what's being sent
+                console.log('[ChatInterface] Sending context to API:', {
+                    ...context,
+                    locationFromState: userLocation,  // Compare with state value
+                    locationFromRef: currentLocation,  // This is what's actually sent
+                });
+                
+                // Pass context data with each message request
+                return {
+                    body: {
+                        messages,
+                        context,
                     },
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`API error: ${response.statusText}`);
-            }
-
-            // Process Server-Sent Events
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-            let fullContent = '';
-
-            if (reader) {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
-
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const dataStr = line.slice(6);
-                            if (dataStr === '[DONE]') {
-                                console.log('[ChatInterface] Stream finished');
-                                continue;
-                            }
-
-                            try {
-                                const data = JSON.parse(dataStr);
-                                console.log('[ChatInterface] Stream event:', data.type);
-
-                                switch (data.type) {
-                                    case 'status':
-                                        // Show initial status
-                                        setMessages((prev) =>
-                                            prev.map((msg) =>
-                                                msg.id === assistantMessageId
-                                                    ? { ...msg, content: data.message || 'Processing...' }
-                                                    : msg
-                                            )
-                                        );
-                                        break;
-
-                                    case 'text-delta':
-                                        // Append text incrementally
-                                        fullContent += data.content;
-                                        setMessages((prev) =>
-                                            prev.map((msg) =>
-                                                msg.id === assistantMessageId
-                                                    ? { ...msg, content: fullContent }
-                                                    : msg
-                                            )
-                                        );
-                                        break;
-
-                                    case 'tool-call':
-                                        // Show tool usage notification
-                                        const toolMessage = fullContent + (fullContent ? '\n\n' : '') + (data.message || `Using ${data.toolName}...`);
-                                        setMessages((prev) =>
-                                            prev.map((msg) =>
-                                                msg.id === assistantMessageId
-                                                    ? { ...msg, content: toolMessage }
-                                                    : msg
-                                            )
-                                        );
-                                        break;
-
-                                    case 'finish':
-                                        // Final update with mapCommands
-                                        fullContent = data.content;
-                                        setMessages((prev) =>
-                                            prev.map((msg) =>
-                                                msg.id === assistantMessageId
-                                                    ? { ...msg, content: fullContent }
-                                                    : msg
-                                            )
-                                        );
-
-                                        if (data.mapCommands && Array.isArray(data.mapCommands)) {
-                                            console.log('[ChatInterface] Executing', data.mapCommands.length, 'mapCommands');
-                                            mapState.executeMapCommands(data.mapCommands);
-                                        }
-                                        break;
-
-                                    case 'error':
-                                        throw new Error(data.message);
-                                }
-                            } catch (e) {
-                                console.error('[ChatInterface] Error parsing stream data:', e);
-                            }
-                        }
-                    }
+                };
+            },
+        }),
+        onError: (error) => {
+            console.error('[ChatInterface] Chat error:', error);
+        },
+        // Handle custom data parts during streaming (not just on finish)
+        onData: (dataPart) => {
+            console.log('[ChatInterface] Data part received:', dataPart);
+            
+            // Handle custom data parts from tools (e.g., mapCommands)
+            // These are sent via writer.custom() in tool execution
+            // Note: Custom data parts must start with 'data-' prefix per AI SDK requirements
+            if (dataPart.type === 'data-mapCommands' && dataPart.data) {
+                console.log('[ChatInterface] Executing mapCommands from stream:', dataPart.data);
+                // Extract the mapCommands from the data wrapper
+                // Type assertion needed as dataPart.data is typed as {}
+                const dataWithCommands = dataPart.data as { mapCommands?: any[] };
+                const mapCommands = dataWithCommands.mapCommands;
+                if (mapCommands) {
+                    console.log('[ChatInterface] Map commands to execute:', mapCommands);
+                    mapState.executeMapCommands(mapCommands);
                 }
             }
-        } catch (error) {
-            const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'assistant',
-                content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
-            };
+        },
+        onFinish: ({ message }) => {
+            console.log('[ChatInterface] Message finished:', message);
+            
+            // Process any data parts for mapCommands that weren't caught during streaming
+            if (message.parts) {
+                message.parts.forEach((part: any) => {
+                    // Handle standard data parts
+                    if (part.type === 'data' && part.data?.mapCommands) {
+                        console.log('[ChatInterface] Executing mapCommands from finished message:', part.data.mapCommands);
+                        mapState.executeMapCommands(part.data.mapCommands);
+                    }
 
-            setMessages((prev) => [...prev, errorMessage]);
-        } finally {
-            setLoading(false);
-        }
+                    // Handle Mastra-specific data parts (agent, workflow, network)
+                    if (part.type === 'data-tool-agent' ||
+                        part.type === 'data-tool-workflow' ||
+                        part.type === 'data-tool-network') {
+                        const data = part.data;
+                        if (data?.mapCommands) {
+                            console.log('[ChatInterface] Executing tool mapCommands:', data.mapCommands);
+                            mapState.executeMapCommands(data.mapCommands);
+                        }
+                    }
+                });
+            }
+        },
+    });
+
+    // Debug: Log messages array
+    useEffect(() => {
+        console.log('[ChatInterface] Messages array updated:', messages);
+        messages.forEach((msg, index) => {
+            const textContent = extractTextContent(msg);
+            console.log(`[ChatInterface] Message ${index}:`, {
+                id: msg.id,
+                role: msg.role,
+                textContent,
+                textContentLength: textContent?.length || 0,
+                hasParts: !!msg.parts,
+                partsCount: msg.parts?.length || 0
+            });
+        });
+    }, [messages]);
+
+    // Auto-scroll to bottom when messages change
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    // Handle form submission
+    const handleFormSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const isLoading = status === 'streaming' || status === 'submitted';
+        if (!inputValue.trim() || isLoading) return;
+
+        // Send message using AI SDK's sendMessage
+        sendMessage({ text: inputValue });
+        setInputValue('');
     };
 
     return (
@@ -204,7 +181,14 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
             {/* Header */}
             <div className="px-4 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-blue-600">
                 <h2 className="text-lg font-semibold text-white">City Analyst</h2>
-                <p className="text-sm text-blue-100">Ask about places nearby</p>
+                <div className="flex items-center gap-2">
+                    <p className="text-sm text-blue-100">Ask about places nearby</p>
+                    {userLocation ? (
+                        <span className="text-xs bg-green-500 text-white px-2 py-0.5 rounded-full">📍 Location Active</span>
+                    ) : (
+                        <span className="text-xs bg-yellow-500 text-white px-2 py-0.5 rounded-full">⏳ Getting location...</span>
+                    )}
+                </div>
             </div>
 
             {/* Messages */}
@@ -218,31 +202,76 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                     </div>
                 )}
 
-                {messages.map((message) => (
-                    <div
-                        key={message.id}
-                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                        <div
-                            className={`max-w-md rounded-lg px-4 py-2 ${message.role === 'user'
-                                ? 'bg-blue-500 text-white'
-                                : 'bg-gray-100 text-gray-900'
-                                }`}
-                        >
-                            {message.role === 'user' ? (
-                                <p className="text-sm">{message.content}</p>
-                            ) : (
-                                <div className="text-sm prose prose-sm max-w-none prose-gray-900">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                        {message.content}
-                                    </ReactMarkdown>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                ))}
+                {messages.map((message) => {
+                    // Extract text content from parts
+                    const textContent = extractTextContent(message);
+                    
+                    // Extract tool calls from parts
+                    const toolCalls = message.parts?.filter((part: any) => 
+                        part.type === 'tool-call'
+                    ) || [];
 
-                {loading && (
+                    return (
+                        <div
+                            key={message.id}
+                            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                        >
+                            <div
+                                className={`max-w-md rounded-lg px-4 py-2 ${message.role === 'user'
+                                    ? 'bg-blue-500 text-white'
+                                    : 'bg-gray-100 text-gray-900'
+                                    }`}
+                            >
+                                {message.role === 'user' ? (
+                                    <p className="text-sm">{textContent}</p>
+                                ) : (
+                                    <>
+                                        <div className="text-sm prose prose-sm max-w-none prose-gray-900">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                {textContent || 'Processing...'}
+                                            </ReactMarkdown>
+                                        </div>
+
+                                        {/* Show tool calls if available */}
+                                        {toolCalls.length > 0 && (
+                                            <div className="mt-2 pt-2 border-t border-gray-200">
+                                                {toolCalls.map((toolCall: any, index: number) => (
+                                                    <div
+                                                        key={`${toolCall.toolCallId || index}`}
+                                                        className="text-xs text-gray-600 flex items-center gap-1 mb-1"
+                                                    >
+                                                        <span>🔧</span>
+                                                        <span>Used: {toolCall.toolName}</span>
+                                                        <span className="text-green-600">✓</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Process custom data parts for tool results */}
+                                        {message.parts && message.parts.map((part: any, i: number) => {
+                                            if (part.type === 'data-tool-agent' ||
+                                                part.type === 'data-tool-workflow' ||
+                                                part.type === 'data-tool-network') {
+                                                const data = part.data as any;
+                                                if (data?.status) {
+                                                    return (
+                                                        <div key={`${message.id}-${i}`} className="text-xs text-gray-500 mt-1">
+                                                            Status: {data.status}
+                                                        </div>
+                                                    );
+                                                }
+                                            }
+                                            return null;
+                                        })}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {(status === 'streaming' || status === 'submitted') && (
                     <div className="flex justify-start">
                         <div className="bg-gray-100 rounded-lg px-4 py-2">
                             <div className="flex gap-1">
@@ -254,30 +283,47 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
                     </div>
                 )}
 
+                {error && (
+                    <div className="flex justify-start">
+                        <div className="bg-red-100 text-red-700 rounded-lg px-4 py-2">
+                            <p className="text-sm">Error: {error.message}</p>
+                        </div>
+                    </div>
+                )}
+
                 <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
             <form
-                onSubmit={handleSubmit}
+                onSubmit={handleFormSubmit}
                 className="px-4 py-4 border-t border-gray-200 bg-gray-50"
             >
-                <div className="flex gap-2">
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Ask about places..."
-                        disabled={loading}
-                        className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                    />
+                <div className="flex flex-col gap-2">
+                    {!userLocation && (
+                        <div className="text-xs text-yellow-600 flex items-center gap-1">
+                            <span>⏳</span>
+                            <span>Waiting for location permission... Messages will be enabled once location is available.</span>
+                        </div>
+                    )}
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            placeholder={userLocation ? "Ask about places..." : "Waiting for location..."}
+                            disabled={false}  // Never disable the input field
+                            className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                        />
                     <button
                         type="submit"
-                        disabled={loading || !input.trim()}
+                        disabled={status === 'streaming' || status === 'submitted' || !inputValue.trim() || !userLocation}
                         className="rounded-lg bg-blue-500 px-4 py-2 text-white hover:bg-blue-600 disabled:bg-gray-400 transition-colors flex items-center gap-2"
+                        title={!userLocation ? 'Waiting for location...' : 'Send message'}
                     >
-                        {loading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                        {(status === 'streaming' || status === 'submitted') ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                     </button>
+                </div>
                 </div>
             </form>
         </div>
