@@ -1,9 +1,10 @@
 'use client';
 
 import { useMapState, MapMarker } from '@/app/hooks/useMapState';
-import { Clock, MapPin, Star, Store, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Clock, MapPin, Star, Store, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Place } from '@/lib/types';
+import { VibeIndicator } from './VibeScoreCard';
 
 interface PlaceCardProps {
   marker: MapMarker;
@@ -32,7 +33,13 @@ function PlaceCard({ marker, onClick, isSelected }: PlaceCardProps) {
   const distance = place.distanceMeters || 0;
   const priceLevel = place.priceLevel;
   const category = place.type || place.category || 'place';
-  
+
+  // Calculate vibe score if semantic attributes are present
+  const vibeScore = place.semanticAttributes
+    ? Object.values(place.semanticAttributes).reduce((sum: number, attr: any) => sum + (attr.score || 0), 0) /
+      Object.keys(place.semanticAttributes).length
+    : undefined;
+
   const getCategoryIcon = () => {
     const catLower = category.toLowerCase();
     if (catLower.includes('cafe') || catLower.includes('coffee')) return '☕';
@@ -97,16 +104,21 @@ function PlaceCard({ marker, onClick, isSelected }: PlaceCardProps) {
           )}
         </div>
 
-        {/* Rating */}
-        {rating && (
-          <div className="flex items-center gap-1 mb-2">
-            <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
-            <span className="text-xs font-semibold text-gray-700">{rating.toFixed(1)}</span>
-            {ratingCount > 0 && (
-              <span className="text-xs text-gray-500">({ratingCount})</span>
-            )}
-          </div>
-        )}
+        {/* Rating and Vibe Score */}
+        <div className="flex items-center justify-between mb-2">
+          {rating && (
+            <div className="flex items-center gap-1">
+              <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
+              <span className="text-xs font-semibold text-gray-700">{rating.toFixed(1)}</span>
+              {ratingCount > 0 && (
+                <span className="text-xs text-gray-500">({ratingCount})</span>
+              )}
+            </div>
+          )}
+          {vibeScore !== undefined && vibeScore > 0 && (
+            <VibeIndicator score={vibeScore} />
+          )}
+        </div>
 
         {/* Address */}
         {address && (
@@ -127,6 +139,24 @@ function PlaceCard({ marker, onClick, isSelected }: PlaceCardProps) {
               <Clock className="w-3.5 h-3.5 text-blue-500" />
               <span className="font-semibold">{formatWalkTime(distance)}</span>
             </div>
+          </div>
+        )}
+
+        {/* Vibe Attributes */}
+        {place.semanticAttributes && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {Object.entries(place.semanticAttributes)
+              .filter(([_, data]: [string, any]) => data.score > 0.7)
+              .slice(0, 2)
+              .map(([attr, _data]: [string, any]) => (
+                <span
+                  key={attr}
+                  className="px-1.5 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700 flex items-center gap-0.5"
+                >
+                  <Sparkles className="w-2.5 h-2.5" />
+                  {attr.replace(/_/g, ' ')}
+                </span>
+              ))}
           </div>
         )}
       </div>
@@ -150,18 +180,14 @@ export function PlaceCarousel({ places = [] }: { places?: Place[] }) {
     title: place.displayName || place.name || 'Place',
     type: 'place' as const,
     metadata: {
+      ...place,
       name: place.displayName || place.name,
       displayName: place.displayName,
-      formattedAddress: place.formattedAddress,
-      rating: place.rating,
       ratingValue: place.rating,
-      userRatingCount: place.userRatingCount,
       reviewCount: place.userRatingCount,
-      priceLevel: place.priceLevel,
       type: place.types?.[0] || 'place',
       category: place.types?.[0] || 'place',
-      distanceMeters: place.distanceMeters || 0,
-      ...place,
+      distanceMeters: place.distance || 0,
     },
   }));
 
@@ -202,6 +228,7 @@ export function PlaceCarousel({ places = [] }: { places?: Place[] }) {
       container.addEventListener('scroll', checkScrollability);
       return () => container.removeEventListener('scroll', checkScrollability);
     }
+    return undefined;
   }, [sortedPlaces.length]);
 
   const scroll = (direction: 'left' | 'right') => {

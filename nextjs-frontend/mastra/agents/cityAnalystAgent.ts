@@ -8,8 +8,10 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { Agent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
+import { OpenAIRealtimeVoice } from "@mastra/voice-openai-realtime";
 import {
     searchPlaces,
+    searchAlongRoute,
     geocode,
     getDirections,
     getPlaceDetails,
@@ -39,6 +41,9 @@ export const cityAnalystAgent = new Agent({
     description:
         "A city analyst AI assistant that helps users find places, analyze neighborhoods, and explore cities through natural language conversation.",
 
+    // Note: Voice is initialized separately in server.js due to function-based instructions
+    // Voice integration requires static instructions, but we need dynamic RuntimeContext access
+
     instructions: async ({
         runtimeContext,
     }: {
@@ -49,7 +54,16 @@ export const cityAnalystAgent = new Agent({
             ? `The user's current location is ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`
             : "The user's location is not currently available from browser geolocation.";
 
-        return `You are MapOps, a conversational city analyst with access to real-time geographic data from Google Maps APIs.
+        return `You are MapOps, a voice-first conversational city analyst with access to real-time geographic data from Google Maps APIs.
+
+## Voice Response Guidelines
+
+**Keep responses concise for voice interaction:**
+- 2-3 sentences maximum per response
+- Let the map show details - you provide context
+- Example: "I found 5 coffee shops nearby. The closest is Blue Bottle, just 3 minutes away. Check the map for all options."
+- Acknowledge what you're doing: "Looking for coffee shops now..." then briefly explain results
+- Map will show markers, routes, and visual details - reference this
 
 ## Core Principle: Answer ONLY from API Data
 
@@ -89,7 +103,15 @@ You have 9 tools available for spatial intelligence:
    - Use for: "Find coffee shops", "What restaurants are near me?", "Show me museums", "Find libraries nearby", "Where are the parks?"
    - Supports ANY place type: cafes, restaurants, museums, libraries, parks, shops, hotels, hospitals, schools, etc.
    - Supports filters: rating, open now, walking distance
-   - Natural language queries work: "quiet cafes", "Italian restaurants", "art museums", "public libraries"
+   - **TRAVEL MODE**: Specify travelMode (DRIVE/WALK/BICYCLE/TRANSIT) for accurate distance/time calculations. Default is WALK.
+     - "coffee shops by car" → travelMode="DRIVE"
+     - "restaurants within biking distance" → travelMode="BICYCLE"
+     - "places I can walk to" → travelMode="WALK" (default)
+   - **SEMANTIC FILTERING**: Extract semantic attributes from user queries naturally and pass via semanticAttributes parameter
+     - When user mentions descriptive qualities/features (e.g., "quiet", "power outlets", "halal", "pet-friendly", "24-hour", "live music"), extract them as semantic attributes
+     - Examples: "quiet coffee shops" → query="coffee shops", semanticAttributes=["quiet"]
+     - The tool analyzes reviews using AI to score relevance and rank results
+     - **Extract ANY semantic attribute from user language - examples above are just patterns, not limitations**
 
 2. **geocode**: Convert addresses to coordinates and vice versa
    - Use for: User provides an address, or you need to find what's at coordinates
@@ -172,6 +194,7 @@ You have 9 tools available for spatial intelligence:
     // Register tools
     tools: {
         "search-places": searchPlaces,
+        "search-along-route": searchAlongRoute,
         geocode: geocode,
         "get-directions": getDirections,
         "get-place-details": getPlaceDetails,

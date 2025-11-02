@@ -21,7 +21,7 @@ export function generatePlaceInsights(
   const suggestions: string[] = [];
   const warnings: string[] = [];
 
-  // Summary
+  // Enhanced Summary with travel info
   let summary = `Found ${results.length} ${searchType} results`;
 
   if (results.length === 0) {
@@ -31,13 +31,50 @@ export function generatePlaceInsights(
     return { summary, highlights, suggestions, warnings };
   }
 
-  // Calculate statistics
+  // Calculate statistics including travel time
   const withRatings = results.filter((p) => p.rating);
   const avgRating =
     withRatings.length > 0
       ? withRatings.reduce((sum: number, p: any) => sum + p.rating, 0) /
         withRatings.length
       : undefined;
+
+  // Add travel time and distance insights
+  const withDistance = results.filter((p) => p.distanceMeters);
+  if (withDistance.length > 0) {
+    const nearest = withDistance.sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
+    const nearestDist = nearest.distanceMeters < 1000
+      ? `${Math.round(nearest.distanceMeters)}m`
+      : `${(nearest.distanceMeters / 1000).toFixed(1)}km`;
+
+    const travelTime = nearest.travelTimeMinutes || nearest.walkingTimeMinutes;
+    const travelMode = nearest.travelMode || 'WALK';
+
+    if (travelTime) {
+      highlights.push(`Nearest: ${nearest.name} (${nearestDist}, ${travelTime} min ${travelMode.toLowerCase()})`);
+    } else {
+      highlights.push(`Nearest: ${nearest.name} (${nearestDist})`);
+    }
+
+    // Add average travel time if available
+    const withTravelTime = results.filter(p => p.travelTimeMinutes || p.walkingTimeMinutes);
+    if (withTravelTime.length > 0) {
+      const avgTravelTime = Math.round(
+        withTravelTime.reduce((sum, p) => sum + (p.travelTimeMinutes || p.walkingTimeMinutes || 0), 0)
+        / withTravelTime.length
+      );
+      highlights.push(`Average travel time: ${avgTravelTime} min`);
+    }
+
+    // Summary with distance range
+    if (withDistance.length === results.length) {
+      const farthest = withDistance[withDistance.length - 1];
+      const farthestDist = farthest.distanceMeters < 1000
+        ? `${Math.round(farthest.distanceMeters)}m`
+        : `${(farthest.distanceMeters / 1000).toFixed(1)}km`;
+      summary += ` within ${nearestDist}-${farthestDist}`;
+    }
+  }
 
   // Highlights
   const bestRated = withRatings.sort((a: any, b: any) => b.rating - a.rating)[0];
@@ -56,13 +93,40 @@ export function generatePlaceInsights(
     highlights.push(`All currently open`);
   }
 
-  // Suggestions
+  // Semantic/Vibe insights
+  const withSemantics = results.filter(p => p.semanticAttributes);
+  if (withSemantics.length > 0) {
+    const topVibeMatch = withSemantics[0];
+    if (topVibeMatch.semanticAttributes) {
+      const vibeAttrs = Object.keys(topVibeMatch.semanticAttributes);
+      const bestVibes = vibeAttrs
+        .filter(attr => topVibeMatch.semanticAttributes[attr].score > 0.7)
+        .slice(0, 2);
+
+      if (bestVibes.length > 0) {
+        highlights.push(`Best vibe match: ${topVibeMatch.name} (${bestVibes.join(', ')})`);
+      }
+    }
+  }
+
+  // Suggestions based on results
   if (results.length > 10) {
     suggestions.push(`Found many results - try being more specific`);
   }
 
   if (results.length === 1) {
     suggestions.push(`Only one result found - consider expanding search`);
+  }
+
+  // Travel-based suggestions
+  const farPlaces = withDistance.filter(p => p.distanceMeters > 5000);
+  if (farPlaces.length > results.length / 2) {
+    suggestions.push(`Most places are far - try searching closer to your location`);
+  }
+
+  const walkable = withDistance.filter(p => p.distanceMeters < 1000);
+  if (walkable.length > 0) {
+    suggestions.push(`${walkable.length} places within walking distance`);
   }
 
   // Warnings
@@ -72,6 +136,11 @@ export function generatePlaceInsights(
 
   if (results.every((p: any) => !p.openNow)) {
     warnings.push("None are currently open");
+  }
+
+  // Warning if no travel info available
+  if (withDistance.length === 0 && results.length > 0) {
+    warnings.push("Travel times not available - location may be needed");
   }
 
   return {

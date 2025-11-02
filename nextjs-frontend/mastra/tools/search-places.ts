@@ -7,9 +7,9 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { PlacesService } from "@/lib/services/places-service";
+import { RoutesService } from "@/lib/services/routes-service";
+import { SemanticReviewAnalyzer } from "@/lib/services/semantic-review-analyzer";
 import {
-  calculateDistance,
-  estimateWalkingTime,
   detectDensity,
 } from "./utils/distance-calculator";
 import { generatePlaceInsights } from "./utils/insight-generator";
@@ -55,6 +55,17 @@ const searchPlaceSchema = z.object({
     .optional()
     .default(10)
     .describe("Maximum results to return (default: 10)"),
+
+  semanticAttributes: z
+    .array(z.string())
+    .optional()
+    .describe("Semantic attributes to filter/rank by (e.g., ['quiet', 'power outlets', 'halal']). Agent should extract these naturally from user queries like 'quiet coffee shops' or 'halal biryani restaurant'."),
+
+  travelMode: z
+    .enum(["DRIVE", "WALK", "BICYCLE", "TRANSIT"])
+    .optional()
+    .default("WALK")
+    .describe("Travel mode for distance/time calculations (default: WALK). Use DRIVE for driving distance, WALK for walking, BICYCLE for cycling, TRANSIT for public transit."),
 });
 
 const placeSchema = z.object({
@@ -72,6 +83,11 @@ const placeSchema = z.object({
   types: z.array(z.string()),
   distanceMeters: z.number().optional(),
   walkingTimeMinutes: z.number().optional(),
+  semanticAttributes: z.record(z.object({
+    score: z.number(),
+    count: z.number(),
+    evidence: z.array(z.string()),
+  })).optional(),
 });
 
 const searchPlacesOutputSchema = z.object({
@@ -120,12 +136,14 @@ export const searchPlaces = createTool({
     - "Blue Bottle Coffee" → query="Blue Bottle Coffee" (searches for specific place)
     - "cafes nearby" → query="cafes" with user location
     - "Italian restaurants" → query="Italian restaurants"
-    - "quiet place to work" → query="quiet cafe workspace"
+    - "quiet coffee shops" → query="coffee shops", semanticAttributes=["quiet"]
+    - "halal biryani restaurant" → query="biryani restaurant", semanticAttributes=["halal", "biryani"]
+    - "cafe with power outlets" → query="cafe", semanticAttributes=["power outlets"]
     
-    NO HARDCODED RULES - Trust the LLM's semantic understanding to:
-    1. Extract the user's intent from natural language
-    2. Pass appropriate query terms to Google's intelligent search
-    3. Let Google Places API interpret the query correctly
+    SEMANTIC FILTERING:
+    - Extract ANY descriptive qualities/features from user queries as semanticAttributes (e.g., "quiet", "power outlets", "halal", "pet-friendly", "24-hour", "live music", etc.)
+    - The tool analyzes reviews using AI to score relevance and rank results
+    - Examples are just patterns - handle ANY semantic attribute naturally
     
     The tool will automatically try multiple search strategies and merge results for best coverage.
     
@@ -138,6 +156,7 @@ export const searchPlaces = createTool({
   execute: async ({ context, runtimeContext, writer }) => {
     try {
       const service = new PlacesService();
+      const routesService = new RoutesService();
 
       // Try to get user location from RuntimeContext as fallback
       const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
@@ -226,23 +245,219 @@ export const searchPlaces = createTool({
         };
       }
 
-      // Enrich results with distance and walking time
-      const enriched = results.map((place) => {
-        const distance = searchLocation
-          ? calculateDistance(searchLocation, place.location)
-          : undefined;
-        const walkingTime = distance ? estimateWalkingTime(distance) : undefined;
+      // PHASE 1: Enrich with DistanceMatrix API (mode-aware distances)
+      let enriched: any[] = [];
+      const travelMode = context.travelMode || "WALK";
+      
+      if (searchLocation && results.length > 0) {
+        console.log(`[search-places] Calculating distances using DistanceMatrix API (mode: ${travelMode})`);
+        try {
+          // Use DistanceMatrix API for accurate, mode-aware distances
+          const origins = [searchLocation];
+          const destinations = results.map(p => p.location);
+          
+          const matrix = await routesService.getDistanceMatrix({
+            origins,
+            destinations,
+            travelMode: travelMode as "DRIVE" | "WALK" | "BICYCLE" | "TRANSIT",
+          });
+
+          // Map matrix results to places
+          enriched = results.map((place, idx) => {
+            const matrixCell = matrix[0]?.[idx];
+            const distanceMeters = matrixCell?.distanceMeters || 0;
+            const durationSeconds = matrixCell?.durationSeconds || 0;
+            const durationMinutes = Math.round(durationSeconds / 60);
+
+            return {
+              ...place,
+              distanceMeters,
+              walkingTimeMinutes: durationMinutes, // Keep name for backward compatibility
+              travelTimeMinutes: durationMinutes, // More accurate name
+              travelMode, // Store the mode used
+            };
+          });
+        } catch (error) {
+          console.warn("[search-places] DistanceMatrix API failed, falling back to Haversine:", error);
+          // Fallback to Haversine if DistanceMatrix fails
+          // Simple Haversine calculation as fallback
+          const R = 6371e3; // Earth radius in meters
+          enriched = results.map((place) => {
+            if (!searchLocation) {
+              return { ...place, distanceMeters: undefined, walkingTimeMinutes: undefined, travelMode };
+            }
+            
+            const φ1 = (searchLocation.lat * Math.PI) / 180;
+            const φ2 = (place.location.lat * Math.PI) / 180;
+            const Δφ = ((place.location.lat - searchLocation.lat) * Math.PI) / 180;
+            const Δλ = ((place.location.lng - searchLocation.lng) * Math.PI) / 180;
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distanceMeters = R * c;
+            const walkingTimeMinutes = Math.round(distanceMeters / 1.4 / 60); // 1.4 m/s walking speed
 
         return {
+              ...place,
+              distanceMeters,
+              walkingTimeMinutes,
+              travelTimeMinutes: walkingTimeMinutes,
+              travelMode,
+            };
+          });
+        }
+      } else {
+        // No location available, just copy results
+        enriched = results.map((place) => ({
           ...place,
-          distanceMeters: distance,
-          walkingTimeMinutes: walkingTime,
-        };
-      });
+          distanceMeters: undefined,
+          walkingTimeMinutes: undefined,
+          travelMode,
+        }));
+      }
 
-      // Sort by distance if we have location
+      // PHASE 2: Semantic Analysis (if semanticAttributes provided)
+      if (context.semanticAttributes && context.semanticAttributes.length > 0) {
+        console.log(`[search-places] Performing semantic analysis for attributes: ${context.semanticAttributes.join(', ')}`);
+
+        const semanticAnalyzer = new SemanticReviewAnalyzer();
+        const { getVibeCacheInstance } = await import('@/lib/services/vibe-cache-service');
+        const vibeCache = getVibeCacheInstance();
+
+        // Increase analysis limit for better vibe matching (was 12, now 20)
+        const placesForAnalysis = enriched.slice(0, Math.min(20, enriched.length));
+        console.log(`[search-places] Analyzing ${placesForAnalysis.length} places for vibe matching`);
+
+        // Batch process for better performance
+        const BATCH_SIZE = 5;
+        const batches = [];
+        for (let i = 0; i < placesForAnalysis.length; i += BATCH_SIZE) {
+          batches.push(placesForAnalysis.slice(i, i + BATCH_SIZE));
+        }
+
+        // Process batches sequentially to avoid rate limiting
+        const enrichedWithSemantics: any[] = [];
+
+        for (const batch of batches) {
+          const batchResults = await Promise.all(
+            batch.map(async (place) => {
+              try {
+                // Check cache first
+                const cachedAnalysis = vibeCache.get(
+                  place.placeId,
+                  context.semanticAttributes!
+                );
+
+                if (cachedAnalysis) {
+                  console.log(`[search-places] Using cached vibe analysis for ${place.name}`);
+                  return {
+                    ...place,
+                    semanticAttributes: cachedAnalysis,
+                  };
+                }
+
+                // Fetch place details with reviews
+                const details = await service.getPlaceDetails(place.placeId, [
+                  'place_id',
+                  'name',
+                  'reviews',
+                  'editorialSummary',
+                ]);
+
+                // Analyze reviews against semantic attributes
+                const reviews = details.reviews || [];
+                const reviewCount = reviews.length;
+                const lastReviewTime = reviews[0]?.publishTime;
+
+                const semanticAnalysis = await semanticAnalyzer.analyze(
+                  reviews,
+                  context.semanticAttributes!
+                );
+
+                // Cache the analysis result
+                vibeCache.set(
+                  place.placeId,
+                  context.semanticAttributes!,
+                  semanticAnalysis,
+                  reviewCount,
+                  lastReviewTime
+                );
+
+                return {
+                  ...place,
+                  semanticAttributes: semanticAnalysis,
+                  reviewCount,
+                };
+              } catch (error) {
+                console.warn(`[search-places] Failed to analyze semantics for ${place.name}:`, error);
+
+                // Return empty scores on error
+                return {
+                  ...place,
+                  semanticAttributes: context.semanticAttributes!.reduce((acc, attr) => {
+                    acc[attr] = { score: 0, count: 0, evidence: [] };
+                    return acc;
+                  }, {} as Record<string, { score: number; count: number; evidence: string[] }>),
+                };
+              }
+            })
+          );
+
+          enrichedWithSemantics.push(...batchResults);
+
+          // Small delay between batches to avoid rate limiting
+          if (batches.indexOf(batch) < batches.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+
+        // Calculate semantic score for ranking
+        const calculateSemanticScore = (place: any): number => {
+          if (!place.semanticAttributes) return 0;
+          
+          const scores = context.semanticAttributes!.map(attr => {
+            const result = place.semanticAttributes[attr];
+            return result ? result.score : 0;
+          });
+          
+          return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+        };
+
+        // Rank by semantic score (weighted with distance/rating)
+        enrichedWithSemantics.sort((a, b) => {
+          const semanticScoreA = calculateSemanticScore(a);
+          const semanticScoreB = calculateSemanticScore(b);
+          
+          // Primary sort: semantic score (descending)
+          if (Math.abs(semanticScoreA - semanticScoreB) > 0.1) {
+            return semanticScoreB - semanticScoreA;
+          }
+          
+          // Secondary sort: distance (if available)
+          if (searchLocation) {
+            const distA = a.distanceMeters || Infinity;
+            const distB = b.distanceMeters || Infinity;
+            if (Math.abs(distA - distB) > 100) {
+              return distA - distB;
+            }
+          }
+          
+          // Tertiary sort: rating
+          const ratingA = a.rating || 0;
+          const ratingB = b.rating || 0;
+          return ratingB - ratingA;
+        });
+
+        // Merge with remaining places (that weren't analyzed)
+        enriched = [
+          ...enrichedWithSemantics,
+          ...enriched.slice(12),
+        ];
+      } else {
+        // No semantic analysis - sort by distance if we have location
       if (searchLocation) {
         enriched.sort((a, b) => (a.distanceMeters || 0) - (b.distanceMeters || 0));
+        }
       }
 
       // Generate insights

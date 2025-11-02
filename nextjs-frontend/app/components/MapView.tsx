@@ -20,7 +20,7 @@ export function MapView({
     center,
     zoom = 13,
     places,
-    selectedPlace,
+    selectedPlace: _selectedPlace,
     userLocation,
     onMarkerClick,
 }: MapViewProps) {
@@ -62,14 +62,6 @@ export function MapView({
     const onUnmount = useCallback(() => {
         mapRef.current = null;
     }, []);
-
-    // Get marker color based on selection
-    const getMarkerColor = (place: Place): string => {
-        if (selectedPlace?.id === place.id) {
-            return '#FF0000'; // Red for selected
-        }
-        return '#4285F4'; // Blue for regular places
-    };
 
     // Update bounds in global state when map bounds change
     const handleBoundsChanged = useCallback(() => {
@@ -263,7 +255,6 @@ export function MapView({
                 let routeOpacity = route.opacity || 0.9;
                 if (mapState.selectedPlaceId && mapState.selectedPlaceId.startsWith('trip-stop-')) {
                   const selectedStopNumber = parseInt(mapState.selectedPlaceId.replace('trip-stop-', ''));
-                  const routeLegIndex = route.metadata?.legIndex;
                   const routeStartStop = route.metadata?.startStop;
                   const routeEndStop = route.metadata?.endStop;
                   

@@ -294,16 +294,20 @@ export class RoutesService {
         typeof loc === "string" ? { address: loc } : { location: loc }
       );
 
-      const body = {
+      const body: any = {
         origins,
         destinations,
         travelMode: options.travelMode || "DRIVE",
-        routeModifiers: {
+      };
+
+      // Only add routeModifiers for DRIVE mode (not supported for WALK/BICYCLE)
+      if (options.travelMode === "DRIVE" || !options.travelMode) {
+        body.routeModifiers = {
           avoidTolls: false,
           avoidHighways: false,
           avoidFerries: false,
-        },
       };
+      }
 
       const response = await fetch(this.distanceMatrixUrl, {
         method: "POST",
@@ -323,6 +327,9 @@ export class RoutesService {
       });
 
       if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error(`[RoutesService] DistanceMatrix API error (${response.status}):`, errorText);
+        console.error(`[RoutesService] Request body:`, JSON.stringify(body, null, 2));
         throw new Error(`Distance Matrix API error: ${response.statusText}`);
       }
 

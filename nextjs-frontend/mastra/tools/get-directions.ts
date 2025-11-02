@@ -8,7 +8,6 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { RoutesService } from "@/lib/services/routes-service";
 import { GeocodingService } from "@/lib/services/geocoding-service";
-import { formatDistance, formatDuration } from "./utils/distance-calculator";
 import { generateDirectionInsights } from "./utils/insight-generator";
 import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
@@ -121,7 +120,7 @@ export const getDirections = createTool({
   inputSchema: getDirectionsSchema,
   outputSchema: getDirectionsOutputSchema,
 
-  execute: async ({ context, runtimeContext, writer }) => {
+  execute: async ({ context, runtimeContext, writer: _writer }) => {
     try {
       const service = new RoutesService();
       const geocodingService = new GeocodingService();

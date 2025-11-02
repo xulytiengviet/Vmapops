@@ -146,11 +146,14 @@ export const tripPlan = createTool({
     try {
       const placesService = new PlacesService();
       const routesService = new RoutesService();
+      const geocodingService = new GeocodingService();
 
-      // Get start location from context or runtime
+      // Get default travel mode early (needed for ranking)
+      const defaultMode = context.travelMode || "WALK";
+
+      // Get user location from RuntimeContext
       const userLocation = runtimeContext?.get("userLocation") as CityAnalystRuntimeContext["userLocation"];
       const savedPlaces = runtimeContext?.get("savedPlaces") as Record<string, { location: { lat: number; lng: number }; name: string; address: string }> | undefined;
-      const geocodingService = new GeocodingService();
 
       // Resolve start location (can be coordinates, saved place name like "home", or undefined)
       let actualStartLocation: { lat: number; lng: number } | null = null;
@@ -255,19 +258,56 @@ export const tripPlan = createTool({
             openNow: true, // Prefer places that are open
           });
 
+          // Enrich with DistanceMatrix API for accurate, mode-aware distances
+          let enriched: any[] = [];
+          // Use mode for this leg (categoryPlaces.length = current leg index)
+          // If legModes provided, use it; otherwise use defaultMode
+          const legIndex = categoryPlaces.length;
+          const travelModeForRanking = context.legModes && context.legModes[legIndex] 
+            ? context.legModes[legIndex] 
+            : defaultMode;
+          
+          if (results.length > 0) {
+            try {
+              console.log(`[trip-plan] Using DistanceMatrix API for ${categoryConfig.category} ranking (mode: ${travelModeForRanking})`);
+              const matrix = await routesService.getDistanceMatrix({
+                origins: [actualStartLocation],
+                destinations: results.map(p => p.location),
+                travelMode: travelModeForRanking as "DRIVE" | "WALK" | "BICYCLE" | "TRANSIT",
+              });
+
+              // Map matrix results to places
+              enriched = results.map((place, idx) => {
+                const matrixCell = matrix[0]?.[idx];
+                const distanceMeters = matrixCell?.distanceMeters || 0;
+                const durationSeconds = matrixCell?.durationSeconds || 0;
+
+                return {
+                  ...place,
+                  distanceMeters,
+                  durationSeconds,
+                };
+              });
+            } catch (error) {
+              console.warn(`[trip-plan] DistanceMatrix failed for ${categoryConfig.category}, falling back to Haversine:`, error);
+              // Fallback to Haversine
+              enriched = results.map((place) => ({
+                ...place,
+                distanceMeters: calculateDistance(actualStartLocation, place.location),
+                durationSeconds: 0, // Unknown duration with Haversine
+              }));
+            }
+          }
+
           // Sort by rating and distance, take top N
-          const enriched = results
-            .map((place) => ({
-              ...place,
-              distanceMeters: calculateDistance(actualStartLocation, place.location),
-            }))
-            .sort((a, b) => {
-              // Prioritize rating, then distance
-              const ratingDiff = (b.rating || 0) - (a.rating || 0);
-              if (Math.abs(ratingDiff) > 0.5) return ratingDiff;
-              return a.distanceMeters - b.distanceMeters;
-            })
-            .slice(0, count);
+          enriched.sort((a, b) => {
+            // Prioritize rating, then distance
+            const ratingDiff = (b.rating || 0) - (a.rating || 0);
+            if (Math.abs(ratingDiff) > 0.5) return ratingDiff;
+            return a.distanceMeters - b.distanceMeters;
+          });
+          
+          enriched = enriched.slice(0, count);
 
           categoryPlaces.push({
             category: categoryConfig.category,
@@ -309,7 +349,6 @@ export const tripPlan = createTool({
       }
 
       // Step 3: Determine travel modes for each leg
-      const defaultMode = context.travelMode || "WALK";
       const numLegs = selectedStops.length; // Number of legs = number of stops (one leg per stop)
       // Use provided legModes or create defaults
       // Note: legModes should match the number of legs after processing (home/work removed if it was first)

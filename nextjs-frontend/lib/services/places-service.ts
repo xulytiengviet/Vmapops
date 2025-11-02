@@ -150,32 +150,96 @@ export class PlacesService {
 
   /**
    * Get detailed information about a specific place
+   * Enhanced to support reviews and editorialSummary for semantic analysis
+   * Includes retry logic for rate limiting
    */
   async getPlaceDetails(
     placeId: string,
-    fields?: string[]
+    fields?: string[],
+    retryCount: number = 0
   ): Promise<any> {
     try {
       const url = new URL(`${this.baseUrl}/details/json`);
       url.searchParams.set("place_id", placeId);
       url.searchParams.set("key", this.apiKey);
 
-      if (fields && fields.length > 0) {
-        url.searchParams.set("fields", fields.join(","));
-      }
+      // Default fields if not specified
+      const defaultFields = [
+        'place_id',
+        'name',
+        'formatted_address',
+        'geometry',
+        'rating',
+        'user_ratings_total',
+        'price_level',
+        'opening_hours',
+        'types',
+        'photos',
+      ];
+
+      // Enhanced fields for vibe analysis - always include reviews for semantic analysis
+      const enhancedFields = [
+        ...defaultFields,
+        'reviews',           // Always fetch reviews for vibe analysis
+        'editorial_summary', // Editorial summaries can provide context
+        'website',          // Useful for additional context
+        'url',             // Google Maps URL
+      ];
+
+      // Use requested fields or enhanced fields
+      const requestedFields = fields && fields.length > 0 ? fields : enhancedFields;
+
+      // Ensure unique fields
+      const fieldList = [...new Set(requestedFields)];
+
+      url.searchParams.set("fields", fieldList.join(","));
 
       const response = await fetch(url.toString());
+
+      // Handle rate limiting with exponential backoff
+      if (response.status === 429 && retryCount < 3) {
+        const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+        console.log(`[PlacesService] Rate limited, retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.getPlaceDetails(placeId, fields, retryCount + 1);
+      }
+
       if (!response.ok) {
-        throw new Error(`Places API error: ${response.statusText}`);
+        throw new Error(`Places API error: ${response.statusText} (${response.status})`);
       }
 
       const data = await response.json();
 
-      if (data.status !== "OK") {
+      if (data.status === "REQUEST_DENIED") {
+        console.error("[PlacesService] Request denied, check API key permissions");
+        throw new Error(`Places API access denied: ${data.error_message || 'Check API key'}`);
+      }
+
+      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
         throw new Error(`Places API returned status: ${data.status}`);
       }
 
-      return data.result;
+      const result = data.result || {};
+
+      // Parse reviews into structured format if present
+      if (result.reviews && Array.isArray(result.reviews)) {
+        result.reviews = result.reviews.map((review: any) => ({
+          text: review.text || review.review_text || '',
+          rating: review.rating,
+          publishTime: review.time || review.publish_time,
+          authorName: review.author_name || review.authorName,
+          authorUrl: review.author_url,
+          language: review.language,
+          originalLanguage: review.original_language,
+          translated: review.translated,
+          relativeTimeDescription: review.relative_time_description,
+        }));
+
+        // Log review count for debugging
+        console.log(`[PlacesService] Fetched ${result.reviews.length} reviews for ${result.name || placeId}`);
+      }
+
+      return result;
     } catch (error) {
       console.error("PlacesService.getPlaceDetails error:", error);
       throw error;

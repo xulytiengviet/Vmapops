@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { LoadScript } from '@react-google-maps/api';
 import { MapView } from './components/MapView';
 import { ChatInterface } from './components/ChatInterface';
+import { VoiceInterfaceRealtime } from './components/VoiceInterfaceRealtime';
 import { Navbar } from './components/Navbar';
 import { Place, Location } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
@@ -181,8 +182,11 @@ export default function Home() {
                             </button>
                         </div>
                     )}
-                    </div>
                 </div>
+                </div>
+
+                {/* Voice Interface - Real-time with WebSocket */}
+                <VoiceInterfaceRealtime />
             </div>
         </LoadScript>
     );

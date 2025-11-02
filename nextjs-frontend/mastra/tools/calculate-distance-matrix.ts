@@ -70,7 +70,7 @@ export const calculateDistanceMatrix = createTool({
   inputSchema: calculateDistanceMatrixSchema,
   outputSchema: calculateDistanceMatrixOutputSchema,
 
-  execute: async ({ context, runtimeContext, writer }) => {
+  execute: async ({ context, runtimeContext }) => {
     try {
       const service = new RoutesService();
 

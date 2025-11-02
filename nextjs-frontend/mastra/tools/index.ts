@@ -4,6 +4,7 @@
  */
 
 export { searchPlaces } from "./search-places";
+export { searchAlongRoute } from "./search-along-route";
 export { geocode } from "./geocode";
 export { getDirections } from "./get-directions";
 export { getPlaceDetails } from "./get-place-details";

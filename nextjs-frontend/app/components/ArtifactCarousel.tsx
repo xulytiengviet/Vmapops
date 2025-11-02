@@ -217,6 +217,18 @@ function PlaceCard({ marker, onClick, isSelected }: { marker: any; onClick?: () 
   const address = place.formattedAddress || place.address || '';
   const distance = place.distanceMeters || 0;
   const category = place.type || place.category || 'place';
+  const semanticAttributes = place.semanticAttributes || {};
+
+  // Get semantic attributes with scores > 0.4 (threshold for showing)
+  const activeAttributes = Object.entries(semanticAttributes)
+    .filter(([_, data]: [string, any]) => data && data.score > 0.4 && data.count > 0)
+    .map(([attr, data]: [string, any]) => ({
+      name: attr,
+      count: data.count,
+      score: data.score,
+      evidence: data.evidence?.[0] || '', // First evidence excerpt
+    }))
+    .sort((a, b) => b.score - a.score); // Sort by score descending
 
   return (
     <div
@@ -244,6 +256,23 @@ function PlaceCard({ marker, onClick, isSelected }: { marker: any; onClick?: () 
             <span className="text-xs text-gray-700">{rating.toFixed(1)}</span>
           </div>
         )}
+        
+        {/* Semantic Attribute Chips */}
+        {activeAttributes.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {activeAttributes.map((attr) => (
+              <div
+                key={attr.name}
+                className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs font-medium flex items-center gap-1"
+                title={attr.evidence ? `"${attr.evidence}"` : `${attr.name} (${attr.count} mentions)`}
+              >
+                <span className="capitalize">{attr.name}</span>
+                <span className="text-blue-500 font-semibold">({attr.count})</span>
+              </div>
+            ))}
+          </div>
+        )}
+        
         {address && (
           <div className="flex items-start gap-1 text-xs text-gray-600 mb-1">
             <MapPin className="w-3 h-3 text-gray-400 mt-0.5 flex-shrink-0" />

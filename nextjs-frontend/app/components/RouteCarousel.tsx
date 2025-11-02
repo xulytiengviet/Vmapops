@@ -151,6 +151,7 @@ export function RouteCarousel() {
       container.addEventListener('scroll', checkScrollability);
       return () => container.removeEventListener('scroll', checkScrollability);
     }
+    return undefined;
   }, [sortedRoutes.length]);
 
   const scroll = (direction: 'left' | 'right') => {

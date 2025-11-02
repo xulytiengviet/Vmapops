@@ -6,7 +6,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { PlacesService } from "@/lib/services/places-service";
-import type { CityAnalystRuntimeContext } from "../agents/cityAnalystAgent";
 
 const getPlaceDetailsSchema = z.object({
   placeId: z.string().describe("Google Place ID"),
@@ -61,7 +60,7 @@ export const getPlaceDetails = createTool({
   inputSchema: getPlaceDetailsSchema,
   outputSchema: getPlaceDetailsOutputSchema,
 
-  execute: async ({ context, runtimeContext, writer }) => {
+  execute: async ({ context, runtimeContext }) => {
     try {
       const service = new PlacesService();
       
