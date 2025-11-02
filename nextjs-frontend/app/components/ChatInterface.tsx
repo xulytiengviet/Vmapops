@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Send, Loader2 } from 'lucide-react';
+import { useMapState } from '@/app/hooks/useMapState';
 
 interface Message {
     id: string;
@@ -13,11 +14,30 @@ interface ChatInterfaceProps {
     onPlaceSelect?: (place: any) => void;
 }
 
-export function ChatInterface({ onPlaceSelect }: ChatInterfaceProps) {
+export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const mapState = useMapState();
+    const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+
+    // Get user's geolocation on mount
+    useEffect(() => {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    setUserLocation({
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                    });
+                },
+                (err) => {
+                    console.warn('Geolocation not available:', err);
+                }
+            );
+        }
+    }, []);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -44,7 +64,7 @@ export function ChatInterface({ onPlaceSelect }: ChatInterfaceProps) {
         setLoading(true);
 
         try {
-            // Call the API route
+            // Call the API route with user location context
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
@@ -55,6 +75,11 @@ export function ChatInterface({ onPlaceSelect }: ChatInterfaceProps) {
                         ...messages.map((m) => ({ role: m.role, content: m.content })),
                         { role: 'user', content: input },
                     ],
+                    context: {
+                        userLocation: userLocation,
+                        mapCenter: mapState.center,
+                        mapZoom: mapState.zoom,
+                    },
                 }),
             });
 
@@ -70,6 +95,11 @@ export function ChatInterface({ onPlaceSelect }: ChatInterfaceProps) {
             };
 
             setMessages((prev) => [...prev, assistantMessage]);
+
+            // Execute map commands if present
+            if (data.mapCommands && Array.isArray(data.mapCommands)) {
+                mapState.executeMapCommands(data.mapCommands);
+            }
         } catch (error) {
             const errorMessage: Message = {
                 id: (Date.now() + 1).toString(),

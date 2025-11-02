@@ -1,8 +1,9 @@
 'use client';
 
 import { GoogleMap, Marker, Polyline } from '@react-google-maps/api';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Place, Location } from '@/lib/types';
+import { useMapState } from '@/app/hooks/useMapState';
 
 interface MapViewProps {
     center: Location;
@@ -22,7 +23,8 @@ export function MapView({
     onMarkerClick,
 }: MapViewProps) {
     const mapRef = useRef<google.maps.Map | null>(null);
-    const [routePolyline, setRoutePolyline] = useState<Location[] | null>(null);
+    const [routePolyline] = useState<Location[] | null>(null);
+    const mapState = useMapState();
 
     const containerStyle = {
         width: '100%',
@@ -48,8 +50,8 @@ export function MapView({
     return (
         <GoogleMap
             mapContainerStyle={containerStyle}
-            center={center}
-            zoom={zoom}
+            center={mapState.center || center}
+            zoom={mapState.zoom || zoom}
             onLoad={onLoad}
             onUnmount={onUnmount}
             options={{
@@ -74,7 +76,7 @@ export function MapView({
                 />
             )}
 
-            {/* Place markers */}
+            {/* Place markers from props */}
             {places.map((place) => (
                 <Marker
                     key={place.id}
@@ -92,7 +94,24 @@ export function MapView({
                 />
             ))}
 
-            {/* Route polyline */}
+            {/* Markers from map state (agent-driven searches) */}
+            {mapState.markers.map((marker) => (
+                <Marker
+                    key={marker.id}
+                    position={marker.position}
+                    title={marker.title}
+                    icon={{
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 8,
+                        fillColor: '#FF6B6B',
+                        fillOpacity: 0.8,
+                        strokeColor: '#fff',
+                        strokeWeight: 2,
+                    }}
+                />
+            ))}
+
+            {/* Route polyline from props */}
             {routePolyline && routePolyline.length > 1 && (
                 <Polyline
                     path={routePolyline}
@@ -103,6 +122,9 @@ export function MapView({
                     }}
                 />
             )}
+
+            {/* Routes from map state would go here (requires polyline decoding) */}
+            {/* TODO: Implement polyline decoding for encoded routes */}
         </GoogleMap>
     );
 }

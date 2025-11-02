@@ -9,7 +9,7 @@ import { Loader2 } from 'lucide-react';
 import { initializeServices } from '@/lib/services';
 
 // Static libraries array to prevent recreation
-const GOOGLE_MAPS_LIBRARIES: ('places' | 'geometry' | 'drawing' | 'localcontext' | 'marker')[] = [
+const GOOGLE_MAPS_LIBRARIES: ('places' | 'geometry' | 'drawing' | 'marker')[] = [
     'places',
 ];
 
@@ -17,7 +17,7 @@ export default function Home() {
     const [mapCenter, setMapCenter] = useState<Location>({ lat: 40.7128, lng: -74.006 });
     const [mapZoom, setMapZoom] = useState(13);
     const [userLocation, setUserLocation] = useState<Location | null>(null);
-    const [places, setPlaces] = useState<Place[]>([]);
+    const [places] = useState<Place[]>([]);
     const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
     const [mapsLoaded, setMapsLoaded] = useState(false);
 
