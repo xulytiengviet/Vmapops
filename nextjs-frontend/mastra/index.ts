@@ -8,8 +8,45 @@
  */
 
 import { Mastra } from "@mastra/core";
-import { cityAnalystAgent } from "./agents/cityAnalystAgent";
+import { getCityAnalystAgent } from "./agents/cityAnalystAgent";
 
-export const mastra = new Mastra({
-    agents: { cityAnalystAgent },
+let mastraInstance: Mastra | null = null;
+let mastraPromise: Promise<Mastra> | null = null;
+
+/**
+ * Get the initialized Mastra instance (lazy async initialization)
+ */
+export async function getMastra(): Promise<Mastra> {
+    if (mastraInstance) {
+        return mastraInstance;
+    }
+    
+    if (!mastraPromise) {
+        mastraPromise = (async () => {
+            const agent = await getCityAnalystAgent();
+            const mastra = new Mastra({
+                agents: { cityAnalystAgent: agent },
+            });
+            mastraInstance = mastra;
+            return mastra;
+        })();
+    }
+    
+    return mastraPromise;
+}
+
+/**
+ * Synchronous getter - throws if Mastra is not yet initialized
+ * Use getMastra() instead for async initialization
+ */
+export const mastra = new Proxy({} as Mastra, {
+    get(_target, prop) {
+        if (mastraInstance) {
+            return (mastraInstance as any)[prop];
+        }
+        throw new Error(
+            `Mastra is not initialized yet. Use getMastra() to initialize it first. ` +
+            `Called: mastra.${String(prop)}`
+        );
+    },
 });

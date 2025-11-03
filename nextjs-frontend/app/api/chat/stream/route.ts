@@ -3,7 +3,7 @@
  * Provides real-time streaming responses with tool execution progress
  */
 
-import { mastra } from "@/mastra";
+import { getMastra } from "@/mastra";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 
 export const maxDuration = 60;
@@ -27,7 +27,8 @@ export async function POST(req: Request) {
             );
         }
 
-        // Get the agent
+        // Get the Mastra instance and agent
+        const mastra = await getMastra();
         const agent = mastra.getAgent("cityAnalystAgent");
         if (!agent) {
             return Response.json(

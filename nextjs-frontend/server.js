@@ -62,6 +62,12 @@ async function loadMastra() {
       'map-observe',
       'navigate-to-place',
       'trip-plan',
+      // Restaurant + interaction tools
+      'get-restaurant-menu',
+      'get-popular-dishes',
+      'check-booking-options',
+      'generate-booking-link',
+      'prepare-call-script',
     ];
     
     const toolMap = {
@@ -75,6 +81,12 @@ async function loadMastra() {
       'map-observe': 'mapObserve',
       'navigate-to-place': 'navigateToPlace',
       'trip-plan': 'tripPlan',
+      // Restaurant + interaction tools
+      'get-restaurant-menu': 'getRestaurantMenu',
+      'get-popular-dishes': 'getPopularDishes',
+      'check-booking-options': 'checkBookingOptions',
+      'generate-booking-link': 'generateBookingLink',
+      'prepare-call-script': 'prepareCallScript',
     };
     
     for (const toolName of toolNames) {
@@ -103,6 +115,23 @@ async function loadMastra() {
     }
     
     console.log('✅ [Custom Server] Agent tools loaded:', Object.keys(agentTools).length, 'tools');
+
+    // Merge MCP tools (Tavily/Exa) so the voice agent has parity with chat agent
+    try {
+      const mcpModule = await import('./mastra/mcp/config.ts');
+      if (mcpModule.getMCPTools) {
+        const mcpTools = await mcpModule.getMCPTools();
+        const mcpToolCount = Object.keys(mcpTools || {}).length;
+        if (mcpToolCount > 0) {
+          Object.assign(agentTools, mcpTools);
+          console.log(`✅ [Custom Server] MCP tools added to voice: ${mcpToolCount} tools`);
+        } else {
+          console.log('[Custom Server] No MCP tools returned');
+        }
+      }
+    } catch (e) {
+      console.warn('[Custom Server] MCP tools not available for voice:', e?.message || e);
+    }
     
     if (Object.keys(agentTools).length === 0) {
       console.error('[Custom Server] WARNING: No tools loaded! Voice will not have any functionality.');
@@ -156,6 +185,22 @@ app.prepare().then(async () => {
     let voiceConnected = false;
     let runtimeContext = null;
     let audioBuffer = [];
+    let hasUserSpoken = false;
+    let lastUserText = '';
+
+    // Heuristic intent detector to avoid premature tool calls
+    const isActionableIntent = (text = '') => {
+      const t = String(text).toLowerCase().trim();
+      if (!t) return false;
+      // Greetings / small talk
+      const smallTalk = /(^(hi|hello|hey)\b)|\b(how (are|r) (you|u))\b|\b(thanks?|thank you)\b|\b(what's up)\b/;
+      if (smallTalk.test(t) && !/(find|show|search|near|nearby|go to|navigate|directions|route|plan|trip|zoom|pan|center)/.test(t)) {
+        return false;
+      }
+      // Actionable intents
+      const intents = /(find|show|search|near|nearby|go to|navigate|directions|route|plan|trip|zoom|pan|center|where is|take me|open|save|clear)/;
+      return intents.test(t);
+    };
 
     // Initialize voice connection
     socket.on('init', async (data) => {
@@ -190,7 +235,7 @@ app.prepare().then(async () => {
         // Create separate voice instance (not attached to agent due to function-based instructions)
         voiceInstance = new OpenAIRealtimeVoice({
           speaker: 'alloy',
-          model: 'gpt-realtime-mini-2025-10-06',
+          model: 'gpt-4o-realtime-preview-2024-10-01',
         });
 
         console.log('✅ [Voice Server] Voice instance created');
@@ -202,11 +247,23 @@ app.prepare().then(async () => {
           toolsWithContext[toolName] = {
             ...tool,
             execute: async (params) => {
+              // Gate tool execution during small talk or vague queries
+              if (!isActionableIntent(lastUserText)) {
+                return { success: false, data: { mapCommands: [] } };
+              }
               // Call original execute with runtime context
-              return tool.execute({
+              const result = await tool.execute({
                 ...params,
                 runtimeContext,
               });
+              // If tool returns mapCommands, forward them to the client so UI updates (ArtifactCarousel, MapView)
+              try {
+                const commands = result?.data?.mapCommands || result?.mapCommands;
+                if (Array.isArray(commands) && commands.length > 0) {
+                  socket.emit('mapCommands', commands);
+                }
+              } catch {}
+              return result;
             },
           };
         }
@@ -225,47 +282,54 @@ app.prepare().then(async () => {
           : "The user's location is not currently available.";
 
         voiceInstance.updateConfig({
-          instructions: `You are MapOps, a voice-first conversational city analyst with access to real-time geographic data from Google Maps APIs.
+          instructions: `You are MapOps, a friendly voice-first city analyst. Be conversational and concise.
 
 ${userLocationText}
 
-**Keep responses concise for voice interaction:**
-- 2-3 sentences maximum per response
-- Let the map show details - you provide context
-- Example: "I found 5 coffee shops nearby. The closest is Blue Bottle, just 3 minutes away."
-- Acknowledge what you're doing then briefly explain results
+Voice style: speak one short sentence. Do not list many items aloud.
 
-**MUST call tools for:**
-- Finding places (coffee, restaurants, etc.) → search-places
-- Getting directions → get-directions
-- Locating addresses → geocode
-- Map controls → map-control
+Tool use guardrails:
+1) Greetings/small talk ("hi", "how are you") → reply briefly, ask how to help; DO NOT call tools.
+2) Clarify when intent is vague ("find coffee" → "near you or a specific area?")
+3) Execute tools only for clear intents (find/search/near me/nearby/directions to/go to/plan trip/route).
+4) After a tool call, keep speech short and let the map/UI show details.
 
-**When user says "near me" or "nearby":**
-- IMMEDIATELY call search-places with user's location
-- DO NOT ask for location - use what you have
+Available tools:
+- search-places (places)
+- get-directions or calculate-distance-matrix (routes/distance)
+- geocode (addresses)
+- map-control (zoom/pan)
 
-**Answer ONLY from API data - do not hallucinate or invent details.**`,
+For "near me" or "nearby", immediately call search-places with the user's location.
+
+Answer only from tool data.`,
           turn_detection: {
             type: 'server_vad',
-            threshold: 0.6,
-            silence_duration_ms: 1200,
+            threshold: 0.7, // Less sensitive to reduce false positives
+            silence_duration_ms: 2500, // Longer silence before considering speech complete
+            prefix_padding_ms: 300, // Add padding to capture speech start
           },
         });
         console.log('✅ [Voice Server] Session configured with instructions and VAD');
 
         // Listen to voice events - use 'speaking' not 'speaker'
         voiceInstance.on('speaking', ({ audio }) => {
+          // Set responding flag when assistant starts speaking
+          isResponding = true;
+          // Ignore any assistant audio before the first user utterance
+          if (!hasUserSpoken) return;
           // Forward audio to client - prefer binary buffers to avoid JSON overhead
           if (audio) {
-            console.log('[Voice Server] Received audio chunk, length:', audio.length);
+            if (process.env.VOICE_DEBUG_AUDIO === '1') {
+              console.log('[Voice Server] Received audio chunk, length:', audio.length);
+            }
             try {
               // Emit as ArrayBuffer when possible for efficient transport
               const buf = audio.buffer ? audio.buffer : Buffer.from(audio);
               socket.emit('audio', buf);
             } catch (e) {
               // Fallback to number array if something goes wrong
-              socket.emit('audio', Array.from(audio));
+            socket.emit('audio', Array.from(audio));
             }
             socket.emit('status', 'speaking');
           } else {
@@ -275,13 +339,19 @@ ${userLocationText}
 
         voiceInstance.on('writing', ({ text, role }) => {
           console.log(`[Voice Server] ${role}: ${text}`);
-          socket.emit('transcript', { text, role });
-          
-          if (role === 'assistant') {
-            socket.emit('status', 'speaking');
-          } else {
+          if (role === 'user') {
+            hasUserSpoken = true;
+            lastUserText = text || '';
+            socket.emit('transcript', { text, role });
             socket.emit('status', 'listening');
+            return;
           }
+          // Suppress any assistant text before the user speaks
+          if (!hasUserSpoken && role === 'assistant') {
+            return;
+          }
+          socket.emit('transcript', { text, role });
+          socket.emit('status', 'speaking');
         });
 
         voiceInstance.on('error', (error) => {
@@ -301,13 +371,20 @@ ${userLocationText}
 
         // OpenAI Realtime events
         voiceInstance.on('openAIRealtime:conversation.interrupted', () => {
-          console.log('[Voice Server] Conversation interrupted');
+          console.log('[Voice Server] Conversation interrupted - clearing response state');
+          isResponding = false;
           socket.emit('status', 'interrupted');
         });
 
         voiceInstance.on('openAIRealtime:conversation.item.completed', () => {
           console.log('[Voice Server] Conversation item completed');
           socket.emit('status', 'completed');
+        });
+        
+        voiceInstance.on('openAIRealtime:response.done', () => {
+          console.log('[Voice Server] Response complete - ready for next input');
+          isResponding = false;
+          socket.emit('status', 'ready');
         });
         
         voiceInstance.on('openAIRealtime:response.audio_transcript.delta', (event) => {
@@ -333,6 +410,7 @@ ${userLocationText}
     // Initialize audio stream for this connection
     let audioStream = null;
     let audioStreamController = null;
+    let isResponding = false; // Track if assistant is currently responding
     
     // Receive audio from client
     socket.on('audio', async (audioData) => {
@@ -341,10 +419,20 @@ ${userLocationText}
         return;
       }
 
+      // BLOCK audio input if assistant is currently responding
+      if (isResponding) {
+        if (process.env.VOICE_DEBUG_AUDIO === '1') {
+          console.log('[Voice Server] Blocking audio - assistant is responding');
+        }
+        return;
+      }
+
       try {
         // First chunk - create a continuous stream
         if (!audioStream) {
-          console.log('[Voice Server] Creating audio stream for continuous sending');
+          if (process.env.VOICE_DEBUG_AUDIO === '1') {
+            console.log('[Voice Server] Creating audio stream for continuous sending');
+          }
           
           // Create a PassThrough stream that we can write to continuously
           const { PassThrough } = require('stream');
@@ -355,7 +443,9 @@ ${userLocationText}
             console.error('[Voice Server] Error sending stream to OpenAI:', error);
           });
           
-          console.log('[Voice Server] Audio stream connected to OpenAI');
+          if (process.env.VOICE_DEBUG_AUDIO === '1') {
+            console.log('[Voice Server] Audio stream connected to OpenAI');
+          }
         }
         
         // Convert array back to Int16Array
@@ -367,7 +457,9 @@ ${userLocationText}
         // Write chunk to the continuous stream
         if (audioStream && !audioStream.destroyed) {
           audioStream.write(buffer);
-          console.log('[Voice Server] Audio chunk written to stream, size:', buffer.length);
+          if (process.env.VOICE_DEBUG_AUDIO === '1') {
+            console.log('[Voice Server] Audio chunk written to stream, size:', buffer.length);
+          }
         }
         
       } catch (error) {
@@ -383,6 +475,8 @@ ${userLocationText}
         audioStream.end();
         audioStream = null;
       }
+      // Reset responding state when user manually stops
+      isResponding = false;
     });
 
     // Disconnect

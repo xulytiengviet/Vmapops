@@ -4,7 +4,7 @@
  * Using AI SDK v5's createUIMessageStream for proper data streaming
  */
 
-import { mastra } from "@/mastra";
+import { getMastra } from "@/mastra";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 
@@ -35,7 +35,8 @@ export async function POST(req: Request) {
             );
         }
 
-        // Get the agent
+        // Get the Mastra instance and agent
+        const mastra = await getMastra();
         const agent = mastra.getAgent("cityAnalystAgent");
         if (!agent) {
             return Response.json(
@@ -83,10 +84,22 @@ export async function POST(req: Request) {
             format: "aisdk",  // Use Mastra's built-in AI SDK format
             maxSteps: 10,     // Allow up to 10 tool calls
             onStepFinish: (step: any) => {
-                console.log("[AI SDK Route] Step finished:", step);
+                console.log("[AI SDK Route] Step finished:", {
+                    stepType: step.stepType,
+                    toolCalls: step.toolCalls?.length || 0,
+                    toolResults: step.toolResults?.length || 0,
+                    textLength: step.text?.length || 0,
+                    model: step.model?.modelId,
+                });
 
                         // Extract mapCommands from step.content (where tool results actually are)
                         const content = step.content || [];
+                        
+                        // Log tool calls for debugging
+                        if (step.toolCalls && step.toolCalls.length > 0) {
+                            console.log(`[AI SDK Route] 🔧 Agent called ${step.toolCalls.length} tool(s):`, 
+                                step.toolCalls.map((tc: any) => tc.toolName || tc.name || 'unknown'));
+                        }
                         
                         for (const item of content) {
                             if (item.type === 'tool-result') {

@@ -6,10 +6,18 @@
 import { MCPClient } from "@mastra/mcp";
 
 /**
+ * Global cache for MCP client to prevent re-initialization in development mode
+ */
+declare global {
+  var __mcpClient: MCPClient | undefined;
+}
+
+/**
  * Unified MCP Client
  * Connects to both Tavily and Exa remote MCP servers
  */
-export const mcpClient = new MCPClient({
+export const mcpClient = global.__mcpClient ?? new MCPClient({
+  id: "mapops-mcp-client", // Unique ID to prevent multiple initialization errors
   servers: {
     tavily: {
       url: new URL(
@@ -23,6 +31,11 @@ export const mcpClient = new MCPClient({
     },
   },
 });
+
+// Cache the client globally to prevent re-initialization
+if (process.env.NODE_ENV !== "production") {
+  global.__mcpClient = mcpClient;
+}
 
 /**
  * Get all tools from connected MCP servers

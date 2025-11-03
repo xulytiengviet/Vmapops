@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { LoadScript } from '@react-google-maps/api';
 import { MapView } from './components/MapView';
 import { ChatInterface } from './components/ChatInterface';
-import { VoiceInterfaceRealtime } from './components/VoiceInterfaceRealtime';
+import { VoiceInterface } from './components/VoiceInterface';
 import { Navbar } from './components/Navbar';
 import { Place, Location } from '@/lib/types';
 import { Loader2 } from 'lucide-react';
@@ -112,14 +112,14 @@ export default function Home() {
             googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!}
             libraries={GOOGLE_MAPS_LIBRARIES}
         >
-            <div className="flex h-screen bg-gray-100 flex-col">
+            <div className="flex h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex-col">
                 {/* Navbar */}
                 <Navbar />
 
                 {/* Main Content */}
                 <div className="flex flex-1 overflow-hidden pt-16">
                 {/* Map - Left side */}
-                <div className="flex-1 relative overflow-hidden">
+                <div className="flex-1 relative overflow-hidden shadow-xl">
                     <MapView
                         center={mapCenter}
                         zoom={mapZoom}
@@ -131,43 +131,45 @@ export default function Home() {
                 </div>
 
                 {/* Right side - Chat and Details */}
-                <div className="w-96 bg-white shadow-lg flex flex-col overflow-hidden">
+                <div className="w-[600px] bg-white/90 backdrop-blur-sm shadow-xl border-l border-gray-200/50 flex flex-col overflow-hidden">
                     {/* Chat Interface */}
                     <ChatInterface onPlaceSelect={handlePlaceSelect} />
 
                     {/* Selected Place Details */}
                     {selectedPlace && (
-                        <div className="border-t border-gray-200 p-4 bg-gray-50 max-h-48 overflow-y-auto">
-                            <h3 className="font-semibold text-gray-900 mb-2">
+                        <div className="border-t border-gray-200/50 p-5 bg-gradient-to-br from-gray-50 to-white max-h-48 overflow-y-auto">
+                            <h3 className="font-semibold text-gray-900 mb-3 text-lg">
                                 {selectedPlace.displayName || selectedPlace.name}
                             </h3>
 
-                            <div className="space-y-2 text-sm">
+                            <div className="space-y-2.5 text-sm">
                                 {selectedPlace.rating && (
-                                    <div>
-                                        <p className="text-gray-600">
-                                            ⭐ {selectedPlace.rating.toFixed(1)} rating
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-yellow-500">⭐</span>
+                                        <p className="text-gray-700 font-medium">
+                                            {selectedPlace.rating.toFixed(1)} rating
                                         </p>
                                     </div>
                                 )}
 
-                                <p className="text-gray-600">{selectedPlace.formattedAddress}</p>
+                                <p className="text-gray-600 leading-relaxed">{selectedPlace.formattedAddress}</p>
 
                                 {selectedPlace.websiteUri && (
                                     <a
                                         href={selectedPlace.websiteUri}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-blue-600 hover:underline"
+                                        className="text-blue-600 hover:text-blue-700 hover:underline inline-flex items-center gap-1 transition-colors"
                                     >
                                         Visit Website
+                                        <span className="text-xs">↗</span>
                                     </a>
                                 )}
 
                                 {selectedPlace.internationalPhoneNumber && (
                                     <a
                                         href={`tel:${selectedPlace.internationalPhoneNumber}`}
-                                        className="text-blue-600 hover:underline block"
+                                        className="text-blue-600 hover:text-blue-700 hover:underline block transition-colors"
                                     >
                                         {selectedPlace.internationalPhoneNumber}
                                     </a>
@@ -176,7 +178,7 @@ export default function Home() {
 
                             <button
                                 onClick={() => setSelectedPlace(null)}
-                                className="mt-4 w-full rounded bg-gray-300 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-400"
+                                className="mt-4 w-full rounded-xl bg-gray-200 hover:bg-gray-300 px-4 py-2.5 text-sm font-medium text-gray-900 transition-colors shadow-sm"
                             >
                                 Close
                             </button>
@@ -185,8 +187,8 @@ export default function Home() {
                 </div>
                 </div>
 
-                {/* Voice Interface - Real-time with WebSocket */}
-                <VoiceInterfaceRealtime />
+                {/* Voice Interface - ElevenLabs TTS + Whisper STT */}
+                <VoiceInterface />
             </div>
         </LoadScript>
     );

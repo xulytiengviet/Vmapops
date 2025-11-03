@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "tsx server.js",
-    "dev:next": "next dev -p 3000",
+    "dev": "next dev -p 3000",
+    "dev:realtime": "tsx server.js",
     "build": "next build",
-    "start": "NODE_ENV=production tsx server.js",
-    "start:next": "next start",
+    "start": "next start",
+    "start:realtime": "NODE_ENV=production tsx server.js",
     "lint": "next lint"
   },
   "dependencies": {

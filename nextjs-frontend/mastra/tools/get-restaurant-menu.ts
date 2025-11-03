@@ -98,29 +98,37 @@ export const getRestaurantMenu = createTool({
         });
       });
 
+      const menuData = {
+        restaurantName: menu.restaurantName,
+        placeId: menu.placeId,
+        menuAvailable: true,
+        lastUpdated: menu.lastUpdated,
+        source: menu.source,
+        confidence: menu.confidence,
+        sections: menu.sections,
+        summary: {
+          totalItems,
+          totalSections: menu.sections.length,
+          priceRange,
+          popularItems: popularItems.map(item => ({
+            name: item.name,
+            price: item.price,
+            section: menu.sections.find(s => s.items.includes(item))?.name,
+          })),
+          dietaryOptions: Array.from(dietaryOptions),
+        },
+        displayText: formatMenuForDisplay(menu),
+      };
+
       return {
         success: true,
-        data: {
-          restaurantName: menu.restaurantName,
-          placeId: menu.placeId,
-          menuAvailable: true,
-          lastUpdated: menu.lastUpdated,
-          source: menu.source,
-          confidence: menu.confidence,
-          sections: menu.sections,
-          summary: {
-            totalItems,
-            totalSections: menu.sections.length,
-            priceRange,
-            popularItems: popularItems.map(item => ({
-              name: item.name,
-              price: item.price,
-              section: menu.sections.find(s => s.items.includes(item))?.name,
-            })),
-            dietaryOptions: Array.from(dietaryOptions),
+        data: menuData,
+        mapCommands: [
+          {
+            type: 'SHOW_MENU',
+            payload: menuData,
           },
-          displayText: formatMenuForDisplay(menu),
-        },
+        ],
       };
     } catch (error) {
       console.error("[get-restaurant-menu] Error:", error);
@@ -156,6 +164,7 @@ export const getRestaurantMenu = createTool({
                 category: z.string().optional(),
                 dietary: z.array(z.string()).optional(),
                 popular: z.boolean().optional(),
+                imageUrl: z.string().optional(),
               })
             ),
           })
@@ -179,6 +188,12 @@ export const getRestaurantMenu = createTool({
         }).optional(),
         displayText: z.string().optional(),
       }),
+      mapCommands: z.array(
+        z.object({
+          type: z.string(),
+          payload: z.any(),
+        })
+      ).optional(),
     }),
     z.object({
       success: z.literal(false),

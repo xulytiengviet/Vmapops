@@ -16,6 +16,7 @@ export function VoiceInterfaceRealtime() {
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const [isListening, setIsListening] = useState(false);
+    const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
     const [status, setStatus] = useState<string>('Waiting for location...');
     const [isDragging, setIsDragging] = useState(false);
     const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -106,6 +107,8 @@ export function VoiceInterfaceRealtime() {
         socket.on('status', (newStatus: string) => {
             console.log('[VoiceInterfaceRealtime] Status update:', newStatus);
             setStatus(newStatus);
+            // Track if assistant is speaking to block audio input
+            setIsAssistantSpeaking(newStatus === 'speaking');
         });
 
         socket.on('audio', (audioData: ArrayBuffer | number[]) => {
@@ -116,7 +119,9 @@ export function VoiceInterfaceRealtime() {
             } else {
                 int16Data = new Int16Array(audioData);
             }
-            console.log('[VoiceInterfaceRealtime] Received audio chunk, length:', int16Data.length);
+            if ((window as any).VOICE_DEBUG_AUDIO) {
+                console.log('[VoiceInterfaceRealtime] Received audio chunk, length:', int16Data.length);
+            }
             playAudioChunk(int16Data);
         });
 
@@ -209,6 +214,9 @@ registerProcessor('mic-processor', MicProcessor);
             // Pipe chunks from the worklet to the server
             micNode.port.onmessage = (event) => {
                 if (!socketRef.current?.connected) return;
+                // BLOCK audio if assistant is speaking (prevent feedback loop)
+                if (isAssistantSpeaking) return;
+                
                 const data = event.data as ArrayBuffer | Int16Array;
                 const int16Data = data instanceof ArrayBuffer ? new Int16Array(data) : (data as Int16Array);
                 const audioArray = Array.from(int16Data);
@@ -326,7 +334,9 @@ registerProcessor('mic-processor', MicProcessor);
             // Update next play time for the next chunk
             nextPlayTimeRef.current = scheduleTime + duration;
             
+            if ((window as any).VOICE_DEBUG_AUDIO) {
             console.log('[VoiceInterfaceRealtime] Scheduled chunk at', scheduleTime.toFixed(3), 's, duration:', duration.toFixed(3), 's');
+            }
         } catch (error) {
             console.error('[VoiceInterfaceRealtime] Error playing audio:', error);
         }

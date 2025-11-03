@@ -39,7 +39,7 @@ export interface MapHighlight {
   color?: string;
 }
 
-export type ArtifactType = 'routes' | 'places' | 'trip';
+export type ArtifactType = 'routes' | 'places' | 'trip' | 'menu';
 
 export interface Artifact {
   id: string;
@@ -79,6 +79,7 @@ export interface MapState {
     travelTimeFromPrevious?: number;
     travelMode?: "DRIVE" | "WALK" | "BICYCLE" | "TRANSIT";
   }>; // Trip itinerary stops
+  menuData?: any; // Restaurant menu data
 
   // Artifact system (unified carousel)
   artifacts: Artifact[];
@@ -121,6 +122,7 @@ export const useMapState = create<MapState>((set) => ({
   selectedRouteId: undefined,
   selectedPlaceId: undefined,
   tripStops: undefined,
+  menuData: undefined,
   artifacts: [],
   activeArtifactId: undefined,
 
@@ -198,6 +200,7 @@ export const useMapState = create<MapState>((set) => ({
     let hasRoutes = false;
     let hasPlaces = false;
     let hasTrip = false;
+    let hasMenu = false;
 
     // Pre-scan commands to determine artifact type
     for (const cmd of commands) {
@@ -219,10 +222,18 @@ export const useMapState = create<MapState>((set) => ({
       if (cmd.type === 'SET_TRIP_STOPS') {
         hasTrip = true;
       }
+      if (cmd.type === 'SHOW_MENU') {
+        hasMenu = true;
+      }
     }
 
     // Determine artifact type and title
-    if (hasTrip) {
+    if (hasMenu) {
+      artifactType = 'menu';
+      // Get restaurant name from menu data
+      const menuCmd = commands.find(cmd => cmd.type === 'SHOW_MENU');
+      artifactTitle = menuCmd?.payload?.restaurantName ? `${menuCmd.payload.restaurantName} Menu` : 'Restaurant Menu';
+    } else if (hasTrip) {
       artifactType = 'trip';
       artifactTitle = 'Trip Itinerary';
     } else if (hasPlaces) {
@@ -351,6 +362,13 @@ export const useMapState = create<MapState>((set) => ({
 
         case 'CLEAR_HIGHLIGHTS': {
           set({ highlights: [] });
+          break;
+        }
+
+        case 'SHOW_MENU': {
+          const menuData = cmd.payload;
+          console.log('[MapState] SHOW_MENU executing - setting menu data');
+          set({ menuData });
           break;
         }
 

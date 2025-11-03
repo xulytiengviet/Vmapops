@@ -122,33 +122,13 @@ const searchPlacesOutputSchema = z.object({
 export const searchPlaces = createTool({
   id: "search-places",
   description: `
-    Comprehensive place search using Google Places API with intelligent understanding.
+    Find places using Google Places API. Use for place types ("coffee shops"), business names ("Blue Bottle"), or location-based searches ("near me").
     
-    IMPORTANT: The LLM should intelligently determine the best search approach based on user intent:
+    Note: For web search (news, events) use tavily_tavily_search. For semantic queries ("similar to X", vibe-based) use exa_web_search_exa first, then this tool.
     
-    APPROACH SELECTION:
-    - For specific business names (e.g., "Blue Bottle Coffee", "Starbucks") → Use 'query' parameter with text search
-    - For categories (e.g., "coffee shops", "restaurants") → Use 'query' parameter for broader results
-    - For "nearby" requests → Ensure location is used (will use user's location automatically)
+    Parameters: Use 'query' for text search, 'location' for nearby searches. Extract semantic attributes from user queries (e.g., "quiet coffee shops" → semanticAttributes=["quiet"]). Supports travelMode (DRIVE/WALK/BICYCLE/TRANSIT) and filters (rating, openNow).
     
-    EXAMPLES TO GUIDE DECISIONS:
-    - "Find coffee shops" → query="coffee shops" (Google understands this naturally)
-    - "Blue Bottle Coffee" → query="Blue Bottle Coffee" (searches for specific place)
-    - "cafes nearby" → query="cafes" with user location
-    - "Italian restaurants" → query="Italian restaurants"
-    - "quiet coffee shops" → query="coffee shops", semanticAttributes=["quiet"]
-    - "halal biryani restaurant" → query="biryani restaurant", semanticAttributes=["halal", "biryani"]
-    - "cafe with power outlets" → query="cafe", semanticAttributes=["power outlets"]
-    
-    SEMANTIC FILTERING:
-    - Extract ANY descriptive qualities/features from user queries as semanticAttributes (e.g., "quiet", "power outlets", "halal", "pet-friendly", "24-hour", "live music", etc.)
-    - The tool analyzes reviews using AI to score relevance and rank results
-    - Examples are just patterns - handle ANY semantic attribute naturally
-    
-    The tool will automatically try multiple search strategies and merge results for best coverage.
-    
-    Returns: Places with name, location, rating, distance, and walking time
-    Shows markers on map automatically when places are found.
+    Automatically tries multiple strategies and merges results. Returns places with location, rating, distance, and map markers.
   `,
   inputSchema: searchPlaceSchema,
   outputSchema: searchPlacesOutputSchema,

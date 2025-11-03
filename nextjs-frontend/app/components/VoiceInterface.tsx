@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { Mic, MicOff, GripVertical } from 'lucide-react';
+import { Mic, MicOff, GripVertical, Radio } from 'lucide-react';
 import { useMapState } from '@/app/hooks/useMapState';
 import { useUserProfile } from '@/app/hooks/useUserProfile';
 
@@ -26,7 +26,8 @@ export function VoiceInterface() {
     const [isAudioEnabled, setIsAudioEnabled] = useState(true);
     const [isDragging, setIsDragging] = useState(false);
     const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-    const [selectedSpeaker] = useState<string>('9BWtsMINqrJLrRacOk9x');
+    const [selectedSpeaker] = useState<string>('nova'); // OpenAI TTS voice
+    const [pushToTalkMode, setPushToTalkMode] = useState<boolean>(true); // Default to push-to-talk
     const dragStartPos = useRef({ x: 0, y: 0 });
     const barRef = useRef<HTMLDivElement>(null);
     
@@ -50,6 +51,23 @@ export function VoiceInterface() {
     useEffect(() => {
         mapStateRef.current = mapState;
     }, [mapState]);
+
+    // Load push-to-talk preference
+    useEffect(() => {
+        try {
+            const savedMode = localStorage.getItem('mapops.pushToTalk');
+            if (savedMode !== null) {
+                setPushToTalkMode(savedMode === 'true');
+            }
+        } catch {}
+    }, []);
+
+    // Save push-to-talk preference
+    useEffect(() => {
+        try {
+            localStorage.setItem('mapops.pushToTalk', pushToTalkMode.toString());
+        } catch {}
+    }, [pushToTalkMode]);
 
     // Get user location
     useEffect(() => {
@@ -110,86 +128,140 @@ export function VoiceInterface() {
             },
         }),
         onData: (dataPart) => {
+            console.log('[VoiceInterface] Received data part:', dataPart);
             if (dataPart.type === 'data-mapCommands' && Array.isArray(dataPart.data)) {
+                const commandTypes = dataPart.data.map((cmd: any) => cmd.type);
+                console.log(`[VoiceInterface] ✅ Received ${dataPart.data.length} mapCommands:`, commandTypes.join(', '));
                 mapStateRef.current.executeMapCommands(dataPart.data);
             }
         },
+        onError: (error) => {
+            console.error('[VoiceInterface] Chat error:', error);
+            setIsProcessing(false);
+        },
     });
+
+    // Track status changes to update processing state
+    useEffect(() => {
+        // Reset processing when chat status is no longer streaming/submitted and we have messages
+        if (status !== 'streaming' && status !== 'submitted' && isProcessing) {
+            const lastAssistantMessage = [...messages].reverse().find(msg => msg.role === 'assistant');
+            // Only reset if we have received a response
+            if (lastAssistantMessage) {
+                console.log('[VoiceInterface] Chat response received, resetting processing state');
+                // Don't reset immediately - let TTS finish first
+                // The TTS effect will reset it when done
+            }
+        }
+    }, [status, isProcessing, messages]);
+
+    // Debug: Log messages array (like ChatInterface does)
+    useEffect(() => {
+        console.log('[VoiceInterface] Messages array updated:', messages.length);
+        messages.forEach((msg, index) => {
+            const textContent = extractTextContent(msg);
+            console.log(`[VoiceInterface] Message ${index}:`, {
+                id: msg.id,
+                role: msg.role,
+                textContent: textContent?.substring(0, 100) + '...',
+                textContentLength: textContent?.length || 0,
+            });
+        });
+    }, [messages]);
 
     // Streaming TTS - speak sentences as they arrive
     useEffect(() => {
         const lastAssistantMessage = [...messages].reverse().find(msg => msg.role === 'assistant');
-        if (!lastAssistantMessage || !isAudioEnabled) return;
+        if (!lastAssistantMessage || !isAudioEnabled) {
+            if (!isAudioEnabled) {
+                console.log('[VoiceInterface] TTS disabled, skipping audio');
+            }
+            return;
+        }
 
         const textContent = extractTextContent(lastAssistantMessage);
+        console.log('[VoiceInterface] Processing assistant message for TTS:', {
+            messageId: lastAssistantMessage.id,
+            textLength: textContent.length,
+            status,
+            isSpeaking: isSpeakingRef.current,
+            spokenLength: spokenTextRef.current.length,
+        });
         
         if (lastPlayedMessageIdRef.current !== lastAssistantMessage.id) {
+            console.log('[VoiceInterface] New message detected, resetting TTS state');
             lastPlayedMessageIdRef.current = lastAssistantMessage.id;
             spokenTextRef.current = '';
             isSpeakingRef.current = false;
         }
 
-        if (!textContent.trim() || textContent === spokenTextRef.current) return;
+        if (!textContent.trim()) {
+            console.log('[VoiceInterface] No text content to speak');
+            return;
+        }
+
+        if (textContent === spokenTextRef.current) {
+            console.log('[VoiceInterface] Already spoken this text');
+            return;
+        }
 
         const newText = textContent.slice(spokenTextRef.current.length);
-        if (newText.trim().length < 10) return;
+        if (newText.trim().length < 10) {
+            console.log('[VoiceInterface] New text too short, waiting for more');
+            return;
+        }
 
-        const sentences = newText.match(/[^.!?\n]+[.!?]+(?:\s+|$)/g) || [];
-        
-        if (sentences.length > 0 && !isSpeakingRef.current) {
-            const sentenceToSpeak = sentences[0]?.trim();
-            if (sentenceToSpeak && sentenceToSpeak.length >= 15) {
-                spokenTextRef.current += sentenceToSpeak + ' ';
-                isSpeakingRef.current = true;
-                
-                speakText(sentenceToSpeak).then(() => {
-                    isSpeakingRef.current = false;
-                    if (status !== 'streaming' && status !== 'submitted') {
-                        setIsProcessing(false);
-                        setTimeout(() => {
-                            if (!isListening && !isProcessing) {
-                                startListening();
-                            }
-                        }, 500);
-                    }
-                }).catch(() => {
-                    isSpeakingRef.current = false;
-                    if (status !== 'streaming' && status !== 'submitted') {
-                        setIsProcessing(false);
-                        setTimeout(() => {
-                            if (!isListening && !isProcessing) {
-                                startListening();
-                            }
-                        }, 500);
-                    }
-                });
-            }
-        } else if (status !== 'streaming' && status !== 'submitted' && textContent.trim() && textContent !== spokenTextRef.current) {
+        // Simplified: speak the entire remaining text when streaming completes
+        if (status !== 'streaming' && status !== 'submitted' && !isSpeakingRef.current) {
             const remainingText = textContent.slice(spokenTextRef.current.length).trim();
-            if (remainingText.length > 0 && !isSpeakingRef.current) {
+            if (remainingText.length > 0) {
+                console.log('[VoiceInterface] Speaking remaining text:', remainingText.substring(0, 100) + '...');
                 spokenTextRef.current = textContent;
                 isSpeakingRef.current = true;
                 
                 speakText(remainingText).then(() => {
+                    console.log('[VoiceInterface] ✅ Finished speaking');
                     isSpeakingRef.current = false;
                     setIsProcessing(false);
-                    setTimeout(() => {
-                        if (!isListening && !isProcessing) {
+                    // Only auto-restart in always-on mode
+                    if (!pushToTalkMode && !isListening && !isProcessing) {
+                        setTimeout(() => {
                             startListening();
-                        }
-                    }, 500);
-                }).catch(() => {
+                        }, 500);
+                    }
+                }).catch((err) => {
+                    console.error('[VoiceInterface] ❌ TTS error:', err);
                     isSpeakingRef.current = false;
                     setIsProcessing(false);
-                    setTimeout(() => {
-                        if (!isListening && !isProcessing) {
+                    // Only auto-restart in always-on mode
+                    if (!pushToTalkMode && !isListening && !isProcessing) {
+                        setTimeout(() => {
                             startListening();
-                        }
-                    }, 500);
+                        }, 500);
+                    }
                 });
             }
+        } else if (status === 'streaming' || status === 'submitted') {
+            // While streaming, extract sentences and speak them incrementally
+            const sentences = newText.match(/[^.!?\n]+[.!?]+(?:\s+|$)/g) || [];
+            if (sentences.length > 0 && !isSpeakingRef.current) {
+                const sentenceToSpeak = sentences[0]?.trim();
+                if (sentenceToSpeak && sentenceToSpeak.length >= 15) {
+                    console.log('[VoiceInterface] Speaking sentence while streaming:', sentenceToSpeak.substring(0, 50) + '...');
+                    spokenTextRef.current += sentenceToSpeak + ' ';
+                    isSpeakingRef.current = true;
+                    
+                    speakText(sentenceToSpeak).then(() => {
+                        isSpeakingRef.current = false;
+                        // Continue processing if still streaming
+                    }).catch((err) => {
+                        console.error('[VoiceInterface] ❌ TTS error during streaming:', err);
+                        isSpeakingRef.current = false;
+                    });
+                }
+            }
         }
-    }, [messages, status, isListening, isProcessing, isAudioEnabled]);
+    }, [messages, status, isListening, isProcessing, isAudioEnabled, pushToTalkMode]);
 
     // VAD
     const setupVAD = (stream: MediaStream) => {
@@ -281,8 +353,12 @@ export function VoiceInterface() {
                     const data = await response.json();
                     
                     if (data.success && data.text?.trim()) {
+                        console.log('[VoiceInterface] ✅ Transcribed text:', data.text);
+                        console.log('[VoiceInterface] 📤 Sending message to chat API...');
                         sendMessage({ text: data.text });
+                        // Keep isProcessing true - will be reset when response completes via status tracking
                     } else {
+                        console.warn('[VoiceInterface] Transcription failed or empty:', data);
                         setIsProcessing(false);
                         setTimeout(() => {
                             if (!isProcessing) {
@@ -304,7 +380,10 @@ export function VoiceInterface() {
             };
 
             mediaRecorderRef.current = mediaRecorder;
-            setupVAD(stream);
+            // Only setup VAD in always-on mode
+            if (!pushToTalkMode) {
+                setupVAD(stream);
+            }
             mediaRecorder.start();
         } catch (error) {
             console.error('[VoiceInterface] Error starting recording:', error);
@@ -328,6 +407,20 @@ export function VoiceInterface() {
             silenceTimerRef.current = null;
         }
         setIsListening(false);
+    };
+
+    // Push-to-talk handlers
+    const handlePushToTalkStart = () => {
+        if (!userLocation || isProcessing || isListening) return;
+        console.log('[VoiceInterface] Push-to-talk: Starting recording');
+        startListening();
+    };
+
+    const handlePushToTalkStop = () => {
+        if (isListening) {
+            console.log('[VoiceInterface] Push-to-talk: Stopping recording');
+            stopListening();
+        }
     };
 
     // Speak text
@@ -395,9 +488,9 @@ export function VoiceInterface() {
         }
     };
 
-    // Auto-start listening when ready
+    // Auto-start listening when ready (only in always-on mode)
     useEffect(() => {
-        if (!userLocation) return;
+        if (!userLocation || pushToTalkMode) return;
 
         const timer = setTimeout(() => {
             if (!isListening && !isProcessing && isAudioEnabled) {
@@ -408,7 +501,7 @@ export function VoiceInterface() {
         return () => {
             clearTimeout(timer);
         };
-    }, [userLocation, isAudioEnabled]);
+    }, [userLocation, isAudioEnabled, pushToTalkMode]);
 
     // Drag handlers
     const handleMouseDown = (e: React.MouseEvent) => {
@@ -461,9 +554,10 @@ export function VoiceInterface() {
 
     // Get status text
     const getStatusText = () => {
+        if (isSpeakingRef.current) return 'Speaking...';
+        if (status === 'streaming' || status === 'submitted') return 'Processing...';
         if (isListening) return 'Listening...';
         if (isProcessing) return 'Processing...';
-        if (status === 'streaming') return 'Speaking...';
         if (!userLocation) return 'Waiting for location...';
         return 'Ready';
     };
@@ -496,26 +590,80 @@ export function VoiceInterface() {
                     <span className="text-white text-sm font-medium">{getStatusText()}</span>
                 </div>
 
-                {/* Toggle Audio */}
+                {/* Push-to-Talk Button (when in push-to-talk mode) */}
+                {pushToTalkMode ? (
+                    <button
+                        onMouseDown={handlePushToTalkStart}
+                        onMouseUp={handlePushToTalkStop}
+                        onTouchStart={(e) => {
+                            e.preventDefault();
+                            handlePushToTalkStart();
+                        }}
+                        onTouchEnd={(e) => {
+                            e.preventDefault();
+                            handlePushToTalkStop();
+                        }}
+                        disabled={isProcessing || !userLocation}
+                        className={`px-6 py-3 rounded-lg border transition-all font-medium ${
+                            isListening
+                                ? 'bg-red-600/80 border-red-400/50 text-white shadow-lg scale-105'
+                                : isProcessing || !userLocation
+                                ? 'bg-gray-700/30 border-white/5 text-white/30 cursor-not-allowed'
+                                : 'bg-blue-600/80 border-blue-400/50 text-white hover:bg-blue-600 shadow-md hover:shadow-lg active:scale-95'
+                        }`}
+                        title={isListening ? "Release to send" : "Hold to speak"}
+                    >
+                        {isListening ? (
+                            <span className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                                Recording...
+                            </span>
+                        ) : (
+                            <span className="flex items-center gap-2">
+                                <Mic size={18} />
+                                Hold to Speak
+                            </span>
+                        )}
+                    </button>
+                ) : (
+                    /* Toggle Audio (always-on mode) */
+                    <button
+                        onClick={() => {
+                            setIsAudioEnabled(!isAudioEnabled);
+                            if (!isAudioEnabled) {
+                                stopAudio();
+                            }
+                        }}
+                        className={`px-4 py-2 rounded-lg border transition-all ${
+                            isAudioEnabled 
+                                ? 'bg-gray-700/50 border-white/10 text-white' 
+                                : 'bg-gray-900/50 border-white/5 text-white/50'
+                        }`}
+                        title="Toggle audio"
+                    >
+                        {isAudioEnabled ? (
+                            <Mic size={18} className="text-white" />
+                        ) : (
+                            <MicOff size={18} className="text-white/50" />
+                        )}
+                    </button>
+                )}
+
+                {/* Toggle Mode */}
                 <button
                     onClick={() => {
-                        setIsAudioEnabled(!isAudioEnabled);
-                        if (!isAudioEnabled) {
-                            stopAudio();
-                        }
+                        setPushToTalkMode(!pushToTalkMode);
+                        stopListening();
+                        setIsProcessing(false);
                     }}
-                    className={`px-4 py-2 rounded-lg border transition-all ${
-                        isAudioEnabled 
-                            ? 'bg-gray-700/50 border-white/10 text-white' 
-                            : 'bg-gray-900/50 border-white/5 text-white/50'
+                    className={`px-3 py-2 rounded-lg border transition-all ${
+                        pushToTalkMode 
+                            ? 'bg-blue-600/50 border-blue-400/30 text-white' 
+                            : 'bg-gray-700/50 border-white/10 text-white'
                     }`}
-                    title="Toggle audio"
+                    title={pushToTalkMode ? "Switch to always-on mode" : "Switch to push-to-talk mode"}
                 >
-                    {isAudioEnabled ? (
-                        <Mic size={18} className="text-white" />
-                    ) : (
-                        <MicOff size={18} className="text-white/50" />
-                    )}
+                    <Radio size={16} />
                 </button>
 
                 {/* End Session */}

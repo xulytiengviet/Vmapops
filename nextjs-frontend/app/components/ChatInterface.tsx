@@ -30,6 +30,7 @@ function extractTextContent(message: any): string {
 
 export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const mapState = useMapState();
     const userProfile = useUserProfile();
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -540,6 +541,15 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    // Auto-resize textarea
+    useEffect(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`;
+        }
+    }, [inputValue]);
+
     // Handle form submission
     const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -552,145 +562,165 @@ export function ChatInterface({ onPlaceSelect: _ }: ChatInterfaceProps) {
         // Send message using AI SDK's sendMessage
         sendMessage({ text: inputValue });
         setInputValue('');
+        
+        // Reset textarea height
+        if (textareaRef.current) {
+            textareaRef.current.style.height = '48px';
+        }
     };
 
     return (
-        <div className="flex flex-col h-full bg-white/80 backdrop-blur-xl rounded-lg shadow-xl border border-white/30 overflow-hidden">
-            {/* Slim Header Bar */}
-            <div className="h-1 bg-gradient-to-r from-blue-400/50 to-purple-400/50" />
-
+        <div className="flex flex-col h-full bg-gradient-to-br from-gray-50 via-white to-gray-50 overflow-hidden">
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.length === 0 && (
-                    <div className="flex items-center justify-center h-full">
-                        <div className="text-center bg-white/40 backdrop-blur-md rounded-2xl px-8 py-6 border border-white/50 shadow-lg">
-                            <div className="text-lg mb-2 text-gray-700 font-medium">👋 Welcome to MapOps</div>
-                            <div className="text-sm text-gray-600">Start by asking about places around you</div>
+            <div className="flex-1 overflow-y-auto">
+                <div className="max-w-3xl mx-auto px-6 py-8 space-y-5">
+                    {messages.length === 0 && (
+                        <div className="flex flex-col items-center justify-center h-full -mt-20">
+                            <div className="text-center space-y-3">
+                                <div className="text-4xl mb-2">🗺️</div>
+                                <h2 className="text-xl font-semibold text-gray-800">Welcome to MapOps</h2>
+                                <p className="text-gray-500 text-sm max-w-sm">Ask me about places, directions, or plan your perfect day out.</p>
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {messages.map((message) => {
-                    // Extract text content from parts
-                    const textContent = extractTextContent(message);
-                    
-                    // Extract tool calls from parts
-                    const toolCalls = message.parts?.filter((part: any) => 
-                        part.type === 'tool-call'
-                    ) || [];
+                    {messages.map((message) => {
+                        // Extract text content from parts
+                        const textContent = extractTextContent(message);
+                        
+                        // Extract tool calls from parts
+                        const toolCalls = message.parts?.filter((part: any) => 
+                            part.type === 'tool-call'
+                        ) || [];
 
-                    return (
-                        <div
-                            key={message.id}
-                            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
+                        return (
                             <div
-                                className={`max-w-md rounded-lg px-4 py-2 ${message.role === 'user'
-                                    ? 'bg-blue-500/90 backdrop-blur-sm text-white shadow-lg border border-blue-400/30'
-                                    : 'bg-white/60 backdrop-blur-md text-gray-900 shadow-lg border border-white/50'
-                                    }`}
+                                key={message.id}
+                                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
-                                {message.role === 'user' ? (
-                                    <p className="text-sm">{textContent}</p>
-                                ) : (
-                                    <>
-                                        <div className="text-sm prose prose-sm max-w-none prose-gray-900">
-                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                                {textContent || 'Processing...'}
-                                            </ReactMarkdown>
-                                        </div>
-
-                                        {/* Show tool calls if available */}
-                                        {toolCalls.length > 0 && (
-                                            <div className="mt-2 pt-2 border-t border-gray-200">
-                                                {toolCalls.map((toolCall: any, index: number) => (
-                                                    <div
-                                                        key={`${toolCall.toolCallId || index}`}
-                                                        className="text-xs text-gray-600 flex items-center gap-1 mb-1"
-                                                    >
-                                                        <span>🔧</span>
-                                                        <span>Used: {toolCall.toolName}</span>
-                                                        <span className="text-green-600">✓</span>
-                                                    </div>
-                                                ))}
+                                <div
+                                    className={`${
+                                        message.role === 'user'
+                                            ? 'bg-blue-600 text-white rounded-2xl px-5 py-3.5 max-w-[85%] shadow-sm'
+                                            : 'bg-white text-gray-900 rounded-2xl px-5 py-3.5 max-w-full shadow-sm border border-gray-100'
+                                    }`}
+                                >
+                                    {message.role === 'user' ? (
+                                        <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">{textContent}</p>
+                                    ) : (
+                                        <>
+                                            <div className="text-[15px] leading-relaxed prose prose-sm max-w-none prose-gray-900 prose-headings:font-semibold prose-headings:text-gray-900 prose-p:text-gray-900 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-strong:text-gray-900 prose-code:text-gray-900 prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200 prose-pre:rounded-lg prose-pre:p-3 prose-pre:text-sm">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                    {textContent || 'Processing...'}
+                                                </ReactMarkdown>
                                             </div>
-                                        )}
 
-                                        {/* Process custom data parts for tool results */}
-                                        {message.parts && message.parts.map((part: any, i: number) => {
-                                            if (part.type === 'data-tool-agent' ||
-                                                part.type === 'data-tool-workflow' ||
-                                                part.type === 'data-tool-network') {
-                                                const data = part.data as any;
-                                                if (data?.status) {
-                                                    return (
-                                                        <div key={`${message.id}-${i}`} className="text-xs text-gray-500 mt-1">
-                                                            Status: {data.status}
+                                            {/* Show tool calls if available */}
+                                            {toolCalls.length > 0 && (
+                                                <div className="mt-3 pt-3 border-t border-gray-200">
+                                                    {toolCalls.map((toolCall: any, index: number) => (
+                                                        <div
+                                                            key={`${toolCall.toolCallId || index}`}
+                                                            className="text-xs text-gray-500 flex items-center gap-1 mb-1"
+                                                        >
+                                                            <span>🔧</span>
+                                                            <span>Used: {toolCall.toolName}</span>
+                                                            <span className="text-green-600">✓</span>
                                                         </div>
-                                                    );
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {/* Process custom data parts for tool results */}
+                                            {message.parts && message.parts.map((part: any, i: number) => {
+                                                if (part.type === 'data-tool-agent' ||
+                                                    part.type === 'data-tool-workflow' ||
+                                                    part.type === 'data-tool-network') {
+                                                    const data = part.data as any;
+                                                    if (data?.status) {
+                                                        return (
+                                                            <div key={`${message.id}-${i}`} className="text-xs text-gray-500 mt-1">
+                                                                Status: {data.status}
+                                                            </div>
+                                                        );
+                                                    }
                                                 }
-                                            }
-                                            return null;
-                                        })}
-                                    </>
-                                )}
+                                                return null;
+                                            })}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    {(status === 'streaming' || status === 'submitted') && (
+                        <div className="flex justify-start">
+                            <div className="bg-white border border-gray-100 rounded-2xl px-5 py-3.5 shadow-sm">
+                                <div className="flex gap-1.5">
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
+                                </div>
                             </div>
                         </div>
-                    );
-                })}
+                    )}
 
-                {(status === 'streaming' || status === 'submitted') && (
-                    <div className="flex justify-start">
-                        <div className="bg-gray-100 rounded-lg px-4 py-2">
-                            <div className="flex gap-1">
-                                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    {error && (
+                        <div className="flex justify-start">
+                            <div className="bg-red-50 text-red-700 border border-red-100 rounded-2xl px-5 py-3.5 shadow-sm">
+                                <p className="text-[15px]">Error: {error.message}</p>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {error && (
-                    <div className="flex justify-start">
-                        <div className="bg-red-100 text-red-700 rounded-lg px-4 py-2">
-                            <p className="text-sm">Error: {error.message}</p>
-                        </div>
-                    </div>
-                )}
-
-                <div ref={messagesEndRef} />
+                    <div ref={messagesEndRef} />
+                </div>
             </div>
 
             {/* Input */}
             <form
                 onSubmit={handleFormSubmit}
-                className="px-4 py-4 border-t border-gray-200/50 bg-white/50 backdrop-blur-md"
+                className="border-t border-gray-200/50 bg-white/80 backdrop-blur-sm"
             >
-                <div className="flex flex-col gap-2">
-                    {!userLocation && (
-                        <div className="flex items-center gap-2 bg-amber-50/80 backdrop-blur-sm border border-amber-200/50 rounded-lg px-3 py-2">
-                            <span className="text-xs text-amber-700">⏳ Waiting for location...</span>
+                <div className="max-w-3xl mx-auto px-6 py-4">
+                    <div className="flex flex-col gap-3">
+                        {!userLocation && (
+                            <div className="flex items-center gap-2 bg-amber-50/80 border border-amber-200/50 rounded-xl px-4 py-2.5 backdrop-blur-sm">
+                                <span className="text-sm text-amber-700">⏳ Waiting for location...</span>
+                            </div>
+                        )}
+                        <div className="flex gap-3 items-end">
+                            <div className="flex-1 relative">
+                                <textarea
+                                    ref={textareaRef}
+                                    value={inputValue}
+                                    onChange={(e) => setInputValue(e.target.value)}
+                                    placeholder={userLocation ? "Message MapOps..." : "Waiting for location..."}
+                                    disabled={false}
+                                    rows={1}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            handleFormSubmit(e as any);
+                                        }
+                                    }}
+                                    className="w-full resize-none rounded-2xl bg-gray-50/80 border border-gray-200/50 px-5 py-3.5 text-[15px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400/50 focus:bg-white transition-all max-h-32 overflow-y-auto backdrop-blur-sm shadow-sm"
+                                    style={{
+                                        minHeight: '48px',
+                                    }}
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={status === 'streaming' || status === 'submitted' || !inputValue.trim() || !userLocation}
+                                className="rounded-2xl bg-blue-600 px-5 py-3.5 text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all flex items-center justify-center min-w-[48px] h-12 shadow-sm hover:shadow-md"
+                                title={!userLocation ? 'Waiting for location...' : 'Send message'}
+                            >
+                                {(status === 'streaming' || status === 'submitted') ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
+                            </button>
                         </div>
-                    )}
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={inputValue}
-                            onChange={(e) => setInputValue(e.target.value)}
-                            placeholder={userLocation ? "Ask about places..." : "Waiting for location..."}
-                            disabled={false}
-                            className="flex-1 rounded-xl bg-white/80 backdrop-blur-sm border border-gray-200/50 px-4 py-3 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400/50 focus:border-blue-300/50 transition-all shadow-sm hover:shadow-md"
-                        />
-                    <button
-                        type="submit"
-                        disabled={status === 'streaming' || status === 'submitted' || !inputValue.trim() || !userLocation}
-                            className="rounded-xl bg-blue-500 px-5 py-3 text-white hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95 flex items-center justify-center min-w-[48px]"
-                        title={!userLocation ? 'Waiting for location...' : 'Send message'}
-                    >
-                        {(status === 'streaming' || status === 'submitted') ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-                    </button>
-                </div>
+                    </div>
                 </div>
             </form>
         </div>

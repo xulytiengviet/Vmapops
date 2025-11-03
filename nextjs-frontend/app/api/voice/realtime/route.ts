@@ -5,7 +5,7 @@
 
 import { NextRequest } from "next/server";
 import { Server as SocketIOServer } from "socket.io";
-import { cityAnalystAgent } from "@/mastra/agents/cityAnalystAgent";
+import { getCityAnalystAgent } from "@/mastra/agents/cityAnalystAgent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import type { CityAnalystRuntimeContext } from "@/mastra/agents/cityAnalystAgent";
 
@@ -31,6 +31,7 @@ function initSocketIO(res: any) {
 
       let voiceConnected = false;
       let runtimeContext: RuntimeContext<any> | null = null;
+      let cityAnalystAgent: Awaited<ReturnType<typeof getCityAnalystAgent>> | null = null;
 
       // Initialize voice connection
       socket.on("init", async (data: {
@@ -65,6 +66,9 @@ function initSocketIO(res: any) {
             runtimeContext.set("savedPlaces", data.savedPlaces);
             console.log("✅ [Voice Realtime] Saved places SET:", Object.keys(data.savedPlaces));
           }
+
+          // Get the agent (store in socket scope for use in other handlers)
+          cityAnalystAgent = await getCityAnalystAgent();
 
           // Connect to agent's voice
           if (!cityAnalystAgent.voice) {
@@ -114,7 +118,7 @@ function initSocketIO(res: any) {
 
       // Receive audio from client
       socket.on("audio", async (audioData: Int16Array) => {
-        if (!voiceConnected || !cityAnalystAgent.voice) {
+        if (!voiceConnected || !cityAnalystAgent?.voice) {
           console.warn("[Voice Realtime] Audio received but voice not connected");
           return;
         }
@@ -142,10 +146,10 @@ function initSocketIO(res: any) {
       });
 
       // Disconnect
-      socket.on("disconnect", () => {
+      socket.on("disconnect", async () => {
         console.log("[Voice Realtime] Client disconnected:", socket.id);
         
-        if (voiceConnected && cityAnalystAgent.voice) {
+        if (voiceConnected && cityAnalystAgent?.voice) {
           try {
             cityAnalystAgent.voice.close();
           } catch (error) {

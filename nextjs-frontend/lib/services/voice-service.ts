@@ -22,7 +22,7 @@ export interface Speaker {
 }
 
 export class VoiceService {
-  private elevenLabs: ElevenLabsVoice;
+  private elevenLabs: ElevenLabsVoice | null = null;
   private openai: OpenAI | null = null;
   private openaiVoice: OpenAIVoice | null = null;
   private defaultSpeaker: string;
@@ -32,128 +32,94 @@ export class VoiceService {
     const elevenLabsKey = config?.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
     const openaiKey = config?.openaiApiKey || process.env.OPENAI_API_KEY;
 
-    if (!elevenLabsKey) {
-      throw new Error("ELEVENLABS_API_KEY is required");
+    if (!openaiKey) {
+      throw new Error("OPENAI_API_KEY is required for voice services");
     }
 
-    console.log("[VoiceService] Initializing ElevenLabsVoice with API key:", elevenLabsKey ? `${elevenLabsKey.substring(0, 10)}...` : "missing");
+    console.log("[VoiceService] Initializing OpenAI Voice (primary TTS)");
 
-    // Ensure env var is set for Mastra's internal validation
-    // Mastra's ElevenLabsVoice checks process.env.ELEVENLABS_API_KEY even if apiKey is passed
-    if (!process.env.ELEVENLABS_API_KEY && elevenLabsKey) {
-      process.env.ELEVENLABS_API_KEY = elevenLabsKey;
-    }
-
-    // Initialize ElevenLabs TTS
-    // Mastra's ElevenLabsVoice expects apiKey in speechModel.config
-    // According to type definition: speechModel?: { name?: string, apiKey?: string }
-    this.elevenLabs = new ElevenLabsVoice({
-      speechModel: {
-        name: "eleven_multilingual_v2",
-        apiKey: elevenLabsKey,
-      },
-      speaker: config?.defaultSpeaker || "9BWtsMINqrJLrRacOk9x", // Default: Aria
+    // Initialize OpenAI for both Whisper STT and TTS
+    this.openai = new OpenAI({
+      apiKey: openaiKey,
     });
+    
+    try {
+      this.openaiVoice = new OpenAIVoice();
+      console.log("[VoiceService] OpenAI Voice initialized successfully");
+    } catch (e) {
+      console.error("[VoiceService] Failed to initialize OpenAI Voice:", e);
+      throw new Error("Failed to initialize OpenAI Voice - voice features unavailable");
+    }
 
-    this.defaultSpeaker = config?.defaultSpeaker || "9BWtsMINqrJLrRacOk9x";
-    this.apiKey = elevenLabsKey;
+    // OpenAI TTS voices: alloy, echo, fable, onyx, nova, shimmer
+    this.defaultSpeaker = config?.defaultSpeaker || "alloy";
+    this.apiKey = openaiKey;
 
-    // Initialize OpenAI for Whisper STT and as TTS fallback
-    if (openaiKey) {
-      this.openai = new OpenAI({
-        apiKey: openaiKey,
-      });
+    // Initialize ElevenLabs as fallback (optional)
+    if (elevenLabsKey) {
+      console.log("[VoiceService] ElevenLabs available as fallback");
+      if (!process.env.ELEVENLABS_API_KEY && elevenLabsKey) {
+        process.env.ELEVENLABS_API_KEY = elevenLabsKey;
+      }
       try {
-        this.openaiVoice = new OpenAIVoice();
+        this.elevenLabs = new ElevenLabsVoice({
+          speechModel: {
+            name: "eleven_multilingual_v2",
+            apiKey: elevenLabsKey,
+          },
+          speaker: "9BWtsMINqrJLrRacOk9x",
+        });
       } catch (e) {
-        console.warn("[VoiceService] Failed to initialize OpenAI Voice fallback:", e);
-        this.openaiVoice = null;
+        console.warn("[VoiceService] ElevenLabs fallback not available:", e);
+        this.elevenLabs = null;
       }
     } else {
-      console.warn("[VoiceService] OPENAI_API_KEY not set - STT will not be available");
+      console.log("[VoiceService] No ElevenLabs key - using OpenAI TTS only");
     }
   }
 
   /**
-   * Convert text to speech
+   * Convert text to speech using OpenAI TTS
    * Returns Node.js ReadableStream (can be piped directly to response)
    */
   async speak(text: string, speaker?: string): Promise<NodeJS.ReadableStream> {
+    if (!this.openaiVoice) {
+      throw new Error("OpenAI Voice not initialized");
+    }
+
     try {
-      const voiceId = speaker || this.defaultSpeaker;
-      console.log("[VoiceService] Speaking text (length:", text.length, "), voice:", voiceId);
-      console.log("[VoiceService] ElevenLabs instance:", !!this.elevenLabs);
+      // OpenAI TTS voices: alloy, echo, fable, onyx, nova, shimmer
+      const voice = speaker || this.defaultSpeaker;
+      console.log("[VoiceService] Using OpenAI TTS, voice:", voice, "text length:", text.length);
       
-      // Ensure we have a valid speaker
-      if (!voiceId) {
-        throw new Error("No speaker/voice ID specified");
-      }
-      
-      const audioStream = await this.elevenLabs.speak(text, {
-        speaker: voiceId,
+      const audioStream = await this.openaiVoice.speak(text, { 
+        voice: voice as any,
+        filetype: "mp3" 
       });
 
       if (!audioStream) {
-        throw new Error("Failed to generate audio stream - returned null/undefined");
+        throw new Error("Failed to generate audio stream from OpenAI");
       }
 
-      console.log("[VoiceService] Audio stream generated successfully, type:", typeof audioStream);
-      return audioStream;
+      console.log("[VoiceService] OpenAI TTS stream generated successfully");
+      return audioStream as unknown as NodeJS.ReadableStream;
     } catch (error: any) {
-      console.error("[VoiceService] Speak error details:", {
-        message: error.message,
-        statusCode: error.statusCode,
-        status: error.status,
-        body: error.body,
-        stack: error.stack?.substring(0, 500),
-      });
+      console.error("[VoiceService] OpenAI TTS error:", error);
       
-      // Fallback #1: call ElevenLabs REST API directly
-      try {
-        const voiceId = speaker || this.defaultSpeaker;
-        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}` as any, {
-          method: "POST",
-          headers: {
-            "xi-api-key": this.apiKey,
-            "Content-Type": "application/json",
-          } as any,
-          body: JSON.stringify({
-            text,
-            model_id: "eleven_multilingual_v2",
-            // You can pass voice_settings here if needed
-          }),
-        } as any);
-
-        if (!res.ok || !res.body) {
-          const bodyText = await (res as any).text?.().catch(() => "");
-          throw new Error(`HTTP fallback failed: ${res.status} ${res.statusText} ${bodyText || ""}`);
+      // Fallback to ElevenLabs if available
+      if (this.elevenLabs) {
+        try {
+          console.log("[VoiceService] Trying ElevenLabs fallback...");
+          const voiceId = "9BWtsMINqrJLrRacOk9x"; // Default ElevenLabs voice
+          const audioStream = await this.elevenLabs.speak(text, { speaker: voiceId });
+          console.log("[VoiceService] ElevenLabs fallback succeeded");
+          return audioStream;
+        } catch (fallbackErr: any) {
+          console.error("[VoiceService] ElevenLabs fallback error:", fallbackErr);
         }
-
-        console.log("[VoiceService] Fallback REST call succeeded");
-        // Return the web ReadableStream; route handler supports both Node and Web streams
-        return (res as any).body as unknown as NodeJS.ReadableStream;
-      } catch (fallbackErr: any) {
-        console.error("[VoiceService] Fallback REST error:", fallbackErr);
-        // Fallback #2: OpenAI TTS (if available)
-        if (this.openaiVoice) {
-          try {
-            console.log("[VoiceService] Trying OpenAI TTS fallback...");
-            const oaStream = await this.openaiVoice.speak(text, { filetype: "mp3" });
-            return oaStream as unknown as NodeJS.ReadableStream;
-          } catch (oaErr: any) {
-            console.error("[VoiceService] OpenAI TTS fallback error:", oaErr);
-          }
-        }
-        // Provide more detailed error information
-        if (error.statusCode === 401 || error.status === 401) {
-          throw new Error("ElevenLabs API key is invalid or expired. Please check your ELEVENLABS_API_KEY.");
-        } else if (error.statusCode === 429 || error.status === 429) {
-          throw new Error("ElevenLabs API quota exceeded. Please check your subscription.");
-        } else if (error.message) {
-          throw new Error(`ElevenLabs TTS error: ${error.message}`);
-        }
-        throw error;
       }
+      
+      throw new Error(`Voice synthesis failed: ${error.message || error}`);
     }
   }
 
@@ -190,21 +156,17 @@ export class VoiceService {
 
   /**
    * Get available speakers/voices
-   * Note: ElevenLabsVoice may not expose getSpeakers, so we return default voices
+   * Returns OpenAI TTS voices
    */
   async getSpeakers(): Promise<Speaker[]> {
-    // Default ElevenLabs voices - common ones
+    // OpenAI TTS voices
     return [
-      { voiceId: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", gender: "female" },
-      { voiceId: "AZnzlk1XvdvUeBnXmlld", name: "Domi", gender: "female" },
-      { voiceId: "EXAVITQu4vr4xnSDxMaL", name: "Bella", gender: "female" },
-      { voiceId: "ErXwobaYiN019PkySvjV", name: "Antoni", gender: "male" },
-      { voiceId: "MF3mGyEYCl7XYWbV9V6O", name: "Elli", gender: "female" },
-      { voiceId: "TxGEqnHWrfWFTfGW9XjX", name: "Josh", gender: "male" },
-      { voiceId: "VR6AewLTigWG4xSOukaG", name: "Arnold", gender: "male" },
-      { voiceId: "pNInz6obpgDQGcFmaJgB", name: "Adam", gender: "male" },
-      { voiceId: "yoZ06aMxZJJ28mfd3POQ", name: "Sam", gender: "male" },
-      { voiceId: "9BWtsMINqrJLrRacOk9x", name: "Aria", gender: "female" },
+      { voiceId: "alloy", name: "Alloy", gender: "neutral" },
+      { voiceId: "echo", name: "Echo", gender: "male" },
+      { voiceId: "fable", name: "Fable", gender: "neutral" },
+      { voiceId: "onyx", name: "Onyx", gender: "male" },
+      { voiceId: "nova", name: "Nova", gender: "female" },
+      { voiceId: "shimmer", name: "Shimmer", gender: "female" },
     ];
   }
 
@@ -215,4 +177,3 @@ export class VoiceService {
     return this.defaultSpeaker;
   }
 }
-

@@ -5,7 +5,7 @@ import { RoutesService } from '@/lib/services/routes-service';
 import { Clock, MapPin, Route as RouteIcon, Star, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
-export type ArtifactType = 'routes' | 'places' | 'trip';
+export type ArtifactType = 'routes' | 'places' | 'trip' | 'menu';
 
 export interface Artifact {
   id: string;
@@ -344,6 +344,95 @@ function TripStopCard({ stop, onClick, isSelected }: { stop: any; onClick?: () =
   );
 }
 
+// Menu Item Card Component
+function MenuItemCard({ item, onClick, isSelected }: { item: any; onClick?: () => void; isSelected: boolean }) {
+  const name = item.name || 'Menu Item';
+  const price = item.price;
+  const description = item.description;
+  const category = item.category || item.section;
+  const dietary = item.dietary || [];
+  const imageUrl = item.imageUrl;
+  const popular = item.popular;
+
+  return (
+    <div
+      onClick={onClick}
+      className={`
+        relative rounded-xl border-2 p-3 cursor-pointer transition-all flex-shrink-0
+        ${isSelected ? 'border-blue-500 shadow-xl scale-105' : 'border-gray-300 hover:border-gray-400'}
+        bg-white backdrop-blur-sm
+      `}
+      style={{
+        minWidth: '280px',
+        maxWidth: '280px',
+        backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.95)',
+      }}
+    >
+      {isSelected && <div className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl bg-blue-500" />}
+      {popular && (
+        <div className="absolute top-2 right-2 bg-yellow-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+          Popular
+        </div>
+      )}
+
+      {/* Menu item image */}
+      {imageUrl && (
+        <div className="mb-2 rounded-lg overflow-hidden h-32 bg-gray-100">
+          <img
+            src={imageUrl}
+            alt={name}
+            className="w-full h-full object-cover"
+            onError={(e) => {
+              // Hide image if it fails to load
+              (e.target as HTMLElement).style.display = 'none';
+            }}
+          />
+        </div>
+      )}
+
+      <div className="mt-1">
+        {/* Item name and price */}
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div className="flex-1 min-w-0">
+            <span className="font-semibold text-gray-900 text-sm block truncate" title={name}>
+              {name}
+            </span>
+            {category && (
+              <span className="text-xs text-gray-500">{category}</span>
+            )}
+          </div>
+          {price && (
+            <span className="text-sm font-bold text-green-600 flex-shrink-0">
+              {price.startsWith('$') ? price : `$${price}`}
+            </span>
+          )}
+        </div>
+
+        {/* Description */}
+        {description && (
+          <p className="text-xs text-gray-600 line-clamp-2 mb-2">
+            {description}
+          </p>
+        )}
+
+        {/* Dietary tags */}
+        {dietary.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {dietary.map((tag: string) => (
+              <span
+                key={tag}
+                className="px-2 py-0.5 bg-green-50 text-green-700 rounded-full text-xs font-medium"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ArtifactCarousel() {
   const mapState = useMapState();
   const artifacts = mapState.artifacts || [];
@@ -564,6 +653,30 @@ export function ArtifactCarousel() {
           );
         });
 
+      case 'menu':
+        const menuData = mapState.menuData;
+        if (!menuData || !menuData.sections) return null;
+
+        // Flatten all menu items from all sections
+        const allMenuItems = menuData.sections.flatMap((section: any) =>
+          section.items.map((item: any) => ({
+            ...item,
+            section: section.name, // Add section name to each item
+          }))
+        );
+
+        return allMenuItems.map((item: any, index: number) => (
+          <MenuItemCard
+            key={`menu-item-${index}`}
+            item={item}
+            onClick={() => {
+              // Menu items don't have associated map markers, so just track selection
+              mapState.setSelectedPlace(`menu-item-${index}`);
+            }}
+            isSelected={mapState.selectedPlaceId === `menu-item-${index}`}
+          />
+        ));
+
       default:
         return null;
     }
@@ -580,7 +693,9 @@ export function ArtifactCarousel() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-lg">
-                {activeArtifact.type === 'routes' ? '🚇' : activeArtifact.type === 'trip' ? '🗺️' : '📍'}
+                {activeArtifact.type === 'routes' ? '🚇' :
+                 activeArtifact.type === 'trip' ? '🗺️' :
+                 activeArtifact.type === 'menu' ? '🍽️' : '📍'}
               </span>
               <h3 className="text-sm font-semibold text-gray-700">
                 {activeArtifact.title}
