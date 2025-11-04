@@ -26,7 +26,6 @@ export class VoiceService {
   private openai: OpenAI | null = null;
   private openaiVoice: OpenAIVoice | null = null;
   private defaultSpeaker: string;
-  private apiKey: string;
 
   constructor(config?: VoiceConfig) {
     const elevenLabsKey = config?.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
@@ -53,7 +52,6 @@ export class VoiceService {
 
     // OpenAI TTS voices: alloy, echo, fable, onyx, nova, shimmer
     this.defaultSpeaker = config?.defaultSpeaker || "alloy";
-    this.apiKey = openaiKey;
 
     // Initialize ElevenLabs as fallback (optional)
     if (elevenLabsKey) {

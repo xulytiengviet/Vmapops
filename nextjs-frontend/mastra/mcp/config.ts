@@ -1,6 +1,5 @@
 /**
- * MCP (Model Context Protocol) Configuration
- * Connects to Tavily and Exa remote MCP servers for enhanced search capabilities
+ Turned of all the servers for the MCP on metorial 
  */
 
 import { MCPClient } from "@mastra/mcp";
