@@ -6,7 +6,12 @@ A map-based AI agent that understands natural language and acts on maps to help 
 
 ## Demo
 
-Watch the demo: [MapOps Demo Video](https://youtu.be/LCXSAKloxjA)
+<div align="center">
+  <a href="https://youtu.be/LCXSAKloxjA">
+    <img src="https://img.youtube.com/vi/LCXSAKloxjA/maxresdefault.jpg" alt="MapOps Demo" style="width:100%; max-width:800px;">
+  </a>
+  <p><em>Click to watch the full demo on YouTube</em></p>
+</div>
 
 ## Features
 
