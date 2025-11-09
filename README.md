@@ -2,6 +2,12 @@
 
 A map-based AI agent that understands natural language and acts on maps to help people explore a city, decide where to go, and discover places tailored to their preferences.
 
+**Built in 18 hours during the YC Agent Jam '25 Hackathon** (November 1-2, 2025, San Francisco, CA)
+
+## Demo
+
+Watch the demo: [MapOps Demo Video](https://youtu.be/LCXSAKloxjA)
+
 ## Features
 
 - Interactive Google Maps view
