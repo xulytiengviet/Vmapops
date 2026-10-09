@@ -1,3 +1,13 @@
+# Vmapops · WebGIS tiếng Việt
+
+Giao diện mới: bản đồ mở, quản lý lớp GeoJSON, đo khoảng cách và cài đặt API riêng.
+**[Hướng dẫn WebGIS và kết nối API](webgis/README.md)** · Long Ngo thiết kế · MIT 2026.
+
+Chạy ngay: `python3 -m http.server 8000` rồi mở `http://localhost:8000`.
+Bản Google Maps trước đây được giữ ở `legacy.html`; mã nguồn và tài liệu gốc bên dưới.
+
+---
+
 # MapOps - Conversational City Analyst
 
 A map-based AI agent that understands natural language and acts on maps to help people explore a city, decide where to go, and discover places tailored to their preferences.
